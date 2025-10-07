@@ -31,6 +31,9 @@ class Config:
     # RAG Configuration
     EMBEDDINGS_MODEL = "all-MiniLM-L6-v2"
     
+    # OpenAI Configuration
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+    
     # GPT Configuration
     GPT_MODEL = "gpt-4.1-mini"
     TEMPERATURE = 0.3
@@ -38,7 +41,12 @@ class Config:
     # Backend
     BACKEND_PORT = 8001
     DATA_DIR = "data/"
-                
+
+    # Storage Collections
+    DOC_ID_NAME_MAPPING_COLLECTION = "doc_id_name_mapping"
+    ENTITY_MAPPINGS_COLLECTION = "entity_mappings"
+    CHUNKS_COLLECTION = "chunks"
+
     # Email Configuration
     IMAP_SERVER = 'imap.gmail.com' 
 

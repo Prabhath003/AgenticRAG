@@ -41,7 +41,7 @@ class UpdateOnlyRequest(BaseModel):
 class ResponseRequiredRequest(BaseModel):
     interaction_type: Literal["reminder_required", "response_required"]
     response_id: int
-    transcript: List[Utterance]
+    transcript: List[Dict[str, Any]]
 
 
 CustomLlmRequest = Union[

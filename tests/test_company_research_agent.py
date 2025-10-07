@@ -1,2 +1,2 @@
-from src.core.agents.company_research_agent import CompanyResearchAgent
+from core.agents.research_agent import CompanyResearchAgent
 

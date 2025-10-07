@@ -1,5 +1,5 @@
 # -----------------------------------------------------------------------------
-# Copyright (c) 2025 Backend
+# Copyright (c) 2025 Edureka Backend
 # All rights reserved.
 #
 # Developed by: GiKA AI Team
@@ -13,7 +13,6 @@
 
 # src/rag_system.py
 import os
-import json
 from typing import List, Optional, Dict, Any
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
@@ -26,336 +25,14 @@ import threading
 import time
 import hashlib
 import numpy as np
-import glob
 
-from .parsers.file_parser import convert_to_md
-from .utils.chunker import chunk_by_MarkDownSplitter
+from ..infrastructure import chunk_file
 from ..config import Config
 from ..log_creator import get_file_logger
+from ..infrastructure.storage import get_storage_session
+from .entity_scoped_rag import get_entity_rag_manager, entity_rag_context
 
 logger = get_file_logger()
-
-# JSON Storage Helper Functions
-class JSONStorage:
-    """Helper class for JSON file storage operations"""
-
-    def __init__(self, data_dir: str = None):
-        self.data_dir = data_dir or Config.DATA_DIR
-        self.storage_dir = os.path.join(self.data_dir, "json_storage")
-        os.makedirs(self.storage_dir, exist_ok=True)
-
-        # File paths for different collections
-        self.chunks_file = os.path.join(self.storage_dir, "chunks.json")
-        self.doc_mappings_file = os.path.join(self.storage_dir, "doc_id_name_mappings.json")
-        self.entity_mappings_file = os.path.join(self.storage_dir, "entity_mappings.json")
-
-        # Initialize files if they don't exist
-        self._ensure_file_exists(self.chunks_file, {})
-        self._ensure_file_exists(self.doc_mappings_file, {})
-        self._ensure_file_exists(self.entity_mappings_file, {})
-
-    def _ensure_file_exists(self, file_path: str, default_content: Dict[str, Any]):
-        """Ensure a JSON file exists with default content"""
-        if not os.path.exists(file_path):
-            with open(file_path, 'w', encoding='utf-8') as f:
-                json.dump(default_content, f, indent=2, ensure_ascii=False, default=str)
-
-    def _read_json_file(self, file_path: str) -> Dict[str, Any]:
-        """Read JSON file safely"""
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError) as e:
-            logger.warning(f"Failed to read {file_path}: {e}, returning empty dict")
-            return {}
-
-    def _write_json_file(self, file_path: str, data: Dict[str, Any]):
-        """Write JSON file safely"""
-        try:
-            # Create backup
-            if os.path.exists(file_path):
-                backup_path = f"{file_path}.backup"
-                os.rename(file_path, backup_path)
-
-            with open(file_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2, ensure_ascii=False, default=str)
-
-            # Remove backup if write was successful
-            backup_path = f"{file_path}.backup"
-            if os.path.exists(backup_path):
-                os.remove(backup_path)
-        except Exception as e:
-            logger.error(f"Failed to write {file_path}: {e}")
-            # Restore backup if it exists
-            backup_path = f"{file_path}.backup"
-            if os.path.exists(backup_path):
-                os.rename(backup_path, file_path)
-            raise
-
-    def find_chunks(self, query: Dict[str, Any] = None) -> List[Dict[str, Any]]:
-        """Find chunks matching query"""
-        data = self._read_json_file(self.chunks_file)
-        results = []
-
-        for chunk_id, chunk_data in data.items():
-            if query:
-                match = True
-                for key, value in query.items():
-                    if key == "_id":
-                        if chunk_id != value:
-                            match = False
-                            break
-                    elif key.startswith("metadata."):
-                        metadata_key = key.replace("metadata.", "")
-                        chunk_metadata = chunk_data.get("metadata", {})
-                        if chunk_metadata.get(metadata_key) != value:
-                            match = False
-                            break
-                    elif chunk_data.get(key) != value:
-                        match = False
-                        break
-
-                if match:
-                    chunk_copy = chunk_data.copy()
-                    chunk_copy["_id"] = chunk_id
-                    results.append(chunk_copy)
-            else:
-                chunk_copy = chunk_data.copy()
-                chunk_copy["_id"] = chunk_id
-                results.append(chunk_copy)
-
-        return results
-
-    def find_one_chunk(self, query: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Find single chunk matching query"""
-        results = self.find_chunks(query)
-        return results[0] if results else None
-
-    def update_chunk(self, chunk_id: str, data: Dict[str, Any], upsert: bool = False):
-        """Update or insert chunk"""
-        chunks_data = self._read_json_file(self.chunks_file)
-
-        if chunk_id in chunks_data or upsert:
-            # Remove _id from data if present to avoid duplication
-            if "_id" in data:
-                del data["_id"]
-            chunks_data[chunk_id] = data
-            self._write_json_file(self.chunks_file, chunks_data)
-        elif not upsert:
-            logger.warning(f"Chunk {chunk_id} not found and upsert=False")
-
-    def find_doc_mappings(self, query: Dict[str, Any] = None) -> List[Dict[str, Any]]:
-        """Find document mappings matching query"""
-        data = self._read_json_file(self.doc_mappings_file)
-        results = []
-
-        for doc_id, doc_data in data.items():
-            if query:
-                match = True
-                for key, value in query.items():
-                    if key == "doc_id":
-                        if doc_id != value:
-                            match = False
-                            break
-                    elif key == "entity_ids":
-                        if isinstance(value, str):
-                            if value not in doc_data.get("entity_ids", []):
-                                match = False
-                                break
-                        elif isinstance(value, dict) and "$exists" in value:
-                            exists = "entity_ids" in doc_data
-                            if exists != value["$exists"]:
-                                match = False
-                                break
-                    elif doc_data.get(key) != value:
-                        match = False
-                        break
-
-                if match:
-                    doc_copy = doc_data.copy()
-                    doc_copy["doc_id"] = doc_id
-                    results.append(doc_copy)
-            else:
-                doc_copy = doc_data.copy()
-                doc_copy["doc_id"] = doc_id
-                results.append(doc_copy)
-
-        return results
-
-    def find_one_doc_mapping(self, query: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Find single document mapping matching query"""
-        results = self.find_doc_mappings(query)
-        return results[0] if results else None
-
-    def update_doc_mapping(self, doc_id: str, data: Dict[str, Any], upsert: bool = False):
-        """Update or insert document mapping"""
-        doc_mappings = self._read_json_file(self.doc_mappings_file)
-
-        if doc_id in doc_mappings:
-            # Handle $set and $addToSet operations
-            if "$set" in data:
-                doc_mappings[doc_id].update(data["$set"])
-            if "$addToSet" in data:
-                for key, value in data["$addToSet"].items():
-                    if key not in doc_mappings[doc_id]:
-                        doc_mappings[doc_id][key] = []
-                    if value not in doc_mappings[doc_id][key]:
-                        doc_mappings[doc_id][key].append(value)
-            if "$setOnInsert" in data and doc_id not in doc_mappings:
-                doc_mappings[doc_id] = data["$setOnInsert"]
-        elif upsert:
-            new_doc = {}
-            if "$set" in data:
-                new_doc.update(data["$set"])
-            if "$setOnInsert" in data:
-                new_doc.update(data["$setOnInsert"])
-            if "$addToSet" in data:
-                for key, value in data["$addToSet"].items():
-                    new_doc[key] = [value]
-            doc_mappings[doc_id] = new_doc
-
-        self._write_json_file(self.doc_mappings_file, doc_mappings)
-
-    def delete_doc_mapping(self, doc_id: str):
-        """Delete document mapping"""
-        doc_mappings = self._read_json_file(self.doc_mappings_file)
-        if doc_id in doc_mappings:
-            del doc_mappings[doc_id]
-            self._write_json_file(self.doc_mappings_file, doc_mappings)
-
-    def find_entity_mappings(self, query: Dict[str, Any] = None) -> List[Dict[str, Any]]:
-        """Find entity mappings matching query"""
-        data = self._read_json_file(self.entity_mappings_file)
-        results = []
-
-        for mapping_id, mapping_data in data.items():
-            if query:
-                match = True
-                for key, value in query.items():
-                    if key == "_id":
-                        if mapping_id != value:
-                            match = False
-                            break
-                    elif key == "$or":
-                        # Handle $or queries
-                        or_match = False
-                        for or_condition in value:
-                            condition_match = True
-                            for cond_key, cond_value in or_condition.items():
-                                if mapping_data.get(cond_key) != cond_value:
-                                    condition_match = False
-                                    break
-                            if condition_match:
-                                or_match = True
-                                break
-                        if not or_match:
-                            match = False
-                            break
-                    elif mapping_data.get(key) != value:
-                        match = False
-                        break
-
-                if match:
-                    mapping_copy = mapping_data.copy()
-                    mapping_copy["_id"] = mapping_id
-                    results.append(mapping_copy)
-            else:
-                mapping_copy = mapping_data.copy()
-                mapping_copy["_id"] = mapping_id
-                results.append(mapping_copy)
-
-        return results
-
-    def update_entity_mapping(self, mapping_id: str, data: Dict[str, Any], upsert: bool = False):
-        """Update or insert entity mapping"""
-        entity_mappings = self._read_json_file(self.entity_mappings_file)
-
-        if mapping_id in entity_mappings:
-            # Handle $addToSet operations
-            if "$addToSet" in data:
-                for key, value in data["$addToSet"].items():
-                    if key not in entity_mappings[mapping_id]:
-                        entity_mappings[mapping_id][key] = []
-                    if value not in entity_mappings[mapping_id][key]:
-                        entity_mappings[mapping_id][key].append(value)
-            if "$setOnInsert" in data and mapping_id not in entity_mappings:
-                entity_mappings[mapping_id] = data["$setOnInsert"]
-        elif upsert:
-            new_mapping = {}
-            if "$setOnInsert" in data:
-                new_mapping.update(data["$setOnInsert"])
-            if "$addToSet" in data:
-                for key, value in data["$addToSet"].items():
-                    new_mapping[key] = [value]
-            entity_mappings[mapping_id] = new_mapping
-
-        self._write_json_file(self.entity_mappings_file, entity_mappings)
-
-    def aggregate_doc_mappings(self, pipeline: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Simple aggregation for document mappings (limited MongoDB aggregation emulation)"""
-        data = self._read_json_file(self.doc_mappings_file)
-        results = []
-
-        # Convert to list format for processing
-        docs = []
-        for doc_id, doc_data in data.items():
-            doc_copy = doc_data.copy()
-            doc_copy["doc_id"] = doc_id
-            docs.append(doc_copy)
-
-        # Process pipeline stages
-        current_docs = docs
-        for stage in pipeline:
-            if "$match" in stage:
-                # Simple match stage
-                match_criteria = stage["$match"]
-                filtered_docs = []
-                for doc in current_docs:
-                    match = True
-                    for key, value in match_criteria.items():
-                        if key == "content_hash" and "$exists" in value:
-                            exists = "content_hash" in doc
-                            if exists != value["$exists"]:
-                                match = False
-                                break
-                        elif doc.get(key) != value:
-                            match = False
-                            break
-                    if match:
-                        filtered_docs.append(doc)
-                current_docs = filtered_docs
-
-            elif "$group" in stage:
-                # Simple group stage for duplicate detection
-                group_criteria = stage["$group"]
-                if "_id" in group_criteria and "docs" in group_criteria and "count" in group_criteria:
-                    group_key = group_criteria["_id"]
-                    groups = {}
-
-                    for doc in current_docs:
-                        key_value = doc.get(group_key.replace("$", ""))
-                        if key_value not in groups:
-                            groups[key_value] = []
-                        groups[key_value].append(doc)
-
-                    grouped_results = []
-                    for key_value, group_docs in groups.items():
-                        grouped_results.append({
-                            "_id": key_value,
-                            "docs": [{"doc_id": doc["doc_id"], "entity_ids": doc.get("entity_ids", [])} for doc in group_docs],
-                            "count": len(group_docs)
-                        })
-
-                    current_docs = grouped_results
-
-            elif "$match" in stage and "count" in stage["$match"]:
-                # Filter by count (for duplicate detection)
-                count_filter = stage["$match"]["count"]
-                if "$gt" in count_filter:
-                    min_count = count_filter["$gt"]
-                    current_docs = [doc for doc in current_docs if doc.get("count", 0) > min_count]
-
-        return current_docs
 
 class RAGSystemPool:
     """
@@ -441,11 +118,10 @@ class RAGSystemPool:
                 self._last_used = time.time()
 
 class RAGSystem:
+    vector_store: Optional[FAISS] = None
+
     def __init__(self):
         logger.info("Initializing RAG System")
-
-        # Initialize JSON storage
-        self.storage = JSONStorage()
 
         # Initialize all attributes first to prevent AttributeError
         # Initialize loaders dictionary first (prevents the AttributeError)
@@ -458,32 +134,24 @@ class RAGSystem:
         logger.info(f"Loaded embeddings model: {Config.EMBEDDINGS_MODEL}")
 
         # Set vector store path
-        self.vector_store_path = os.path.join(Config.DATA_DIR, "vector_stores")
-
-        # Entity-specific vector stores
-        self.entity_vector_stores: Dict[str, FAISS] = {}  # entity_id -> FAISS store
-        self.global_vector_store: Optional[FAISS] = None  # For global search across all entities
+        self.vector_store_path = os.path.join(Config.DATA_DIR, "vector_store")
 
         self.document_hashes: Dict[str, str] = {}
         self.doc_id_to_hash: Dict[str, str] = {}
 
-        # Index mappings for efficient filtering - keeping for backward compatibility
+        # Index mappings for efficient filtering
         self.entity_to_chunks: Dict[str, set] = {}  # entity_id -> set of chunk indices
         self.doc_to_chunks: Dict[str, set] = {}     # doc_id -> set of chunk indices
         self.chunk_metadata: Dict[int, Dict[str, Any]] = {}  # chunk index -> metadata
-
-        # Entity-specific metadata tracking
-        self.entity_chunk_metadata: Dict[str, Dict[int, Dict[str, Any]]] = {}  # entity_id -> chunk_index -> metadata
-        self.entity_doc_mapping: Dict[str, Dict[str, set]] = {}  # entity_id -> doc_id -> chunk_indices
-
-        try:
-            # Load existing vector stores (this should be done last)
-            self.load_vector_stores(self.vector_store_path)
-
+        
+        try:            
+            # Load existing vector store (this should be done last)
+            self.load_vector_store(self.vector_store_path)
+            
             self._load_existing_document_hashes()
-
+            
             logger.info("RAG System initialization completed successfully")
-
+            
         except Exception as e:
             logger.error(f"Failed to initialize RAG System: {e}")
             # Clean up any partially initialized state
@@ -493,57 +161,58 @@ class RAGSystem:
     def cleanup_duplicate_documents(self) -> Dict[str, int]:
         """Find and clean up duplicate documents"""
         logger.info("Starting duplicate document cleanup")
-
+        
         stats: Dict[str, int|bool] = {
             'duplicates_found': 0,
             'duplicates_removed': 0,
             'vector_store_rebuilt': False
         }
-
+        
         try:
-            # Find documents with same content hash using JSON storage
-            pipeline: List[Dict[str, Dict[str, Any]]] = [
-                {"$match": {"content_hash": {"$exists": True}}},
-                {"$group": {
-                    "_id": "$content_hash",
-                    "docs": {"$push": {"doc_id": "$doc_id", "entity_ids": "$entity_ids"}},
-                    "count": {"$sum": 1}
-                }},
-                {"$match": {"count": {"$gt": 1}}}
-            ]
+            with get_storage_session() as db:
+                # Find documents with same content hash
+                pipeline: List[Dict[str, Dict[str, Any]]] = [
+                    {"$match": {"content_hash": {"$exists": True}}},
+                    {"$group": {
+                        "_id": "$content_hash",
+                        "docs": {"$push": {"doc_id": "$doc_id", "entity_ids": "$entity_ids"}},
+                        "count": {"$sum": 1}
+                    }},
+                    {"$match": {"count": {"$gt": 1}}}
+                ]
 
-            duplicates = self.storage.aggregate_doc_mappings(pipeline)
-            stats['duplicates_found'] = len(duplicates)
-
-            for dup_group in duplicates:
-                docs = dup_group['docs']
-                # Keep the first document, merge others into it
-                primary_doc = docs[0]
-
-                all_entity_ids = set(primary_doc.get('entity_ids', []))
-
-                # Collect all entity IDs from duplicates
-                for doc in docs[1:]:
-                    all_entity_ids.update(doc.get('entity_ids', []))
-
-                    # Delete duplicate document
-                    self.delete_document(doc['doc_id'])
-                    stats['duplicates_removed'] += 1
-
-                # Update primary document with all entity IDs
-                self.storage.update_doc_mapping(
-                    primary_doc['doc_id'],
-                    {"$set": {"entity_ids": list(all_entity_ids)}}
-                )
-
-            if stats['duplicates_removed'] > 0:
-                # Rebuild vector stores
-                self._rebuild_vector_stores_without_document(None)  # Full rebuild
-                stats['vector_store_rebuilt'] = True
-
+                duplicates = list(db[Config.DOC_ID_NAME_MAPPING_COLLECTION].aggregate(pipeline))
+                stats['duplicates_found'] = len(duplicates)
+                
+                for dup_group in duplicates:
+                    docs = dup_group['docs']
+                    # Keep the first document, merge others into it
+                    primary_doc = docs[0]
+                    
+                    all_entity_ids = set(primary_doc.get('entity_ids', []))
+                    
+                    # Collect all entity IDs from duplicates
+                    for doc in docs[1:]:
+                        all_entity_ids.update(doc.get('entity_ids', []))
+                        
+                        # Delete duplicate document
+                        self.delete_document(doc['doc_id'])
+                        stats['duplicates_removed'] += 1
+                    
+                    # Update primary document with all entity IDs
+                    db[Config.DOC_ID_NAME_MAPPING_COLLECTION].update_one(
+                        {"doc_id": primary_doc['doc_id']},
+                        {"$set": {"entity_ids": list(all_entity_ids)}}
+                    )
+                
+                if stats['duplicates_removed'] > 0:
+                    # Rebuild vector store
+                    self._rebuild_vector_store_without_document(None)  # Full rebuild
+                    stats['vector_store_rebuilt'] = True
+                    
             logger.info(f"Duplicate cleanup completed: {stats}")
             return stats
-
+            
         except Exception as e:
             logger.error(f"Failed to cleanup duplicates: {e}")
             return stats
@@ -559,18 +228,21 @@ class RAGSystem:
             return None
         
     def _load_existing_document_hashes(self):
-        """Load existing document hashes from JSON storage"""
+        """Load existing document hashed from storage"""
         try:
-            existing_docs = self.storage.find_doc_mappings({"content_hash": {"$exists": True}})
+            with get_storage_session() as db:
+                existing_docs = db[Config.DOC_ID_NAME_MAPPING_COLLECTION].find(
+                    {"content_hash": {"$exists": True}},
+                    {"doc_id": 1, "content_hash": 1}
+                )
 
-            for doc in existing_docs:
-                doc_id = doc["doc_id"]
-                content_hash = doc.get("content_hash")
-                if content_hash:
+                for doc in existing_docs:
+                    doc_id = doc["doc_id"]
+                    content_hash = doc["content_hash"]
                     self.document_hashes[content_hash] = doc_id
                     self.doc_id_to_hash[doc_id] = content_hash
 
-            logger.info(f"Loaded {len(self.document_hashes)} existing document hashes")
+                logger.info(f"Loaded {len(self.document_hashes)} existing document hashes")
 
         except Exception as e:
             logger.error(f"Failed to load existing document hashes: {e}")
@@ -618,9 +290,10 @@ class RAGSystem:
                     self._add_entity_to_existing_document(existing_doc_id, entity_id)
                 
                 # Get existing document info
-                existing_doc = self.storage.find_one_doc_mapping(
-                    {"doc_id": existing_doc_id}
-                )
+                with get_storage_session() as db:
+                    existing_doc = db[Config.DOC_ID_NAME_MAPPING_COLLECTION].find_one(
+                        {"doc_id": existing_doc_id}
+                    )
 
                 if existing_doc:
                     return {
@@ -645,18 +318,19 @@ class RAGSystem:
             doc_id: str = str(split_docs[0]['metadata']['doc_id'])
             doc_name: str = str(split_docs[0]['metadata']['doc_name'])
             
-            for chunk in split_docs:
-                chunk_id = f"chunk_{chunk['metadata']['doc_id']}_{chunk['chunk']['chunk_order_index']}"
-                update_doc = {key: value for key, value in chunk.items() if key != "_id"}
+            with get_storage_session() as db:
+                for chunk in split_docs:
+                    chunk_id = f"chunk_{chunk['metadata']['doc_id']}_{chunk['chunk']['chunk_order_index']}"
+                    update_doc = {key: value for key, value in chunk.items() if key != "_id"}
 
-                self.storage.update_chunk(chunk_id, update_doc, upsert=True)
+                    db[Config.CHUNKS_COLLECTION].update_one(
+                        {"_id": chunk_id},
+                        {"$set": update_doc},
+                        upsert=True
+                    )
             
-            # Add to entity-specific vector stores
-            entity_ids = split_docs[0]['metadata'].get('entity_ids', [])
-            self._create_or_update_entity_vector_stores(split_docs, entity_ids)
-
-            # Also add to global vector store for global search
-            self._create_or_update_global_vector_store(split_docs)
+            # Add to vector store
+            self._create_or_update_vector_store(split_docs)
             
             # Update document mappings
             self._update_docid_name_mapping(doc_id, file_path, entity_id, content_hash, metadata)
@@ -681,55 +355,76 @@ class RAGSystem:
             return None
         
         finally:
-            self.save_vector_stores()
+            self.save_vector_store()
         
     def _add_entity_to_existing_document(self, doc_id: str, entity_id: str):
         """Add entity association to an existing document"""
         try:
-            # Update document mapping
-            self.storage.update_doc_mapping(
-                doc_id,
-                {"$addToSet": {"entity_ids": entity_id}}
-            )
-            logger.debug(f"Added entity {entity_id} to existing document {doc_id}")
+            with get_storage_session() as db:
+                # Update document mapping
+                db[Config.DOC_ID_NAME_MAPPING_COLLECTION].update_one(
+                    {'doc_id': doc_id},
+                    {"$addToSet": {"entity_ids": entity_id}}
+                )
+                logger.debug(f"Added entity {entity_id} to existing document {doc_id}")
 
         except Exception as e:
             logger.error(f"Failed to add entity to existing document: {e}")
     
     def update_entity_with_document(self, entity_id: str, doc_id: str, doc_name: str, description: str = "Related document"):
-        """Update entity document with reference to indexed document (simplified for JSON storage)"""
+        """Update entity document with reference to indexed document"""
         logger.debug(f"Updating entity {entity_id} with document {doc_id}")
-
+        
         try:
-            entity_mapping_id = f"{entity_id}_{doc_id}"
-
-            # Check if the entity mapping already exists
-            existing_mapping = self.storage.find_entity_mappings({"_id": entity_mapping_id})
-
-            if existing_mapping:
-                # Document exists, just add to relations
-                update_data = {
-                    "$addToSet": {
-                        "relations": ["document", "more details"]
+            doc_reference: Dict[str, Any] = {
+                "doc_id": doc_id,
+                "filename": doc_name,
+                "description": description,
+                "indexed_at": datetime.now(timezone.utc)
+            }
+            entity_type = entity_id.split("_")[0]
+            with get_storage_session() as db:
+                result = db[entity_type].update_one(
+                    {"_id": entity_id},
+                    {
+                        "$set": {
+                            f"related_doc_ids.{doc_id}": doc_reference
+                        }
                     }
-                }
-            else:
-                # Document doesn't exist, create it with initial relations
-                update_data: Dict[str, Dict[str, Any]] = {
-                    "$setOnInsert": {
-                        "_id": entity_mapping_id,
-                        "source_id": entity_id,
-                        "target_id": doc_id,
-                        "relations": [["document", "more details"]],
-                        "doc_name": doc_name,
-                        "description": description,
-                        "indexed_at": datetime.now(timezone.utc).isoformat()
-                    }
-                }
-
-            self.storage.update_entity_mapping(entity_mapping_id, update_data, upsert=True)
-
-            logger.debug(f"Entity mapping updated for entity {entity_id} and document {doc_id}")
+                )
+                logger.debug(f"Entity update result - matched: {result.matched_count}, modified: {result.modified_count}")
+                
+                if result.modified_count:
+                    entity_mapping_id = f"{entity_id}_{doc_id}"
+                    
+                    # Check if the entity mapping already exists
+                    existing_mapping = db["entity_mappings"].find_one({"_id": entity_mapping_id})
+                    
+                    if existing_mapping:
+                        # Document exists, just add to relations
+                        update_data = {
+                            "$addToSet": {
+                                "relations": ["document", "more details"]
+                            }
+                        }
+                    else:
+                        # Document doesn't exist, create it with initial relations
+                        update_data: Dict[str, Dict[str, Any]] = {
+                            "$setOnInsert": {
+                                "_id": entity_mapping_id,
+                                "source_id": entity_id,
+                                "target_id": doc_id,
+                                "relations": [["document", "more details"]]  
+                            }
+                        }
+                    
+                    result = db["entity_mappings"].update_one(
+                        {"_id": entity_mapping_id},
+                        update_data,
+                        upsert=True
+                    )
+                    
+                    logger.debug(f"Entity mapping update result - matched: {result.matched_count}, modified: {result.modified_count}")
 
         except Exception as e:
             logger.error(f"Failed to update entity with document reference: {e}")
@@ -776,26 +471,33 @@ class RAGSystem:
                 if content_hash in self.document_hashes:
                     del self.document_hashes[content_hash]
             
-            # Get document info from JSON storage
-            relation_docs = self.storage.find_entity_mappings({
-                "$or": [
-                    {"target_id": doc_id},
-                    {"source_id": doc_id}
-                ]
-            })
+            # Get document info from storage
+            with get_storage_session() as db:
 
-            if relation_docs:
-                raise RuntimeError("Cannot delete a document when attached to entities, detach the document before")
-
-            doc_info = self.storage.find_one_doc_mapping({"doc_id": doc_id})
-
-            if not doc_info:
-                logger.warning(f"Document not found in storage: {doc_id}")
-                return False
-
-            # Remove from document mappings
-            self.storage.delete_doc_mapping(doc_id)
-            logger.debug(f"Removed document from mappings: {doc_id}")
+                relation_docs = list(db[Config.ENTITY_MAPPINGS_COLLECTION].find({
+                    "$or": [
+                        {"target_id": doc_id},
+                        {"source_id": doc_id}
+                    ]
+                }))
+                
+                if relation_docs:
+                    raise RuntimeError("Cannot delete a document when attached to entities, detach the document before")
+                
+                
+                doc_info = db[Config.DOC_ID_NAME_MAPPING_COLLECTION].find_one(
+                    {"doc_id": doc_id}
+                )
+                
+                if not doc_info:
+                    logger.warning(f"Document not found in database: {doc_id}")
+                    return False
+                
+                # Remove from document mappings
+                db[Config.DOC_ID_NAME_MAPPING_COLLECTION].delete_one(
+                    {"doc_id": doc_id}
+                )
+                logger.debug(f"Removed document from mappings: {doc_id}")
                 
                 # Remove from entities that reference this document
                 # TODO: Find all the entities connected to this document and delete them we can find that in entity_mappings collection
@@ -828,9 +530,9 @@ class RAGSystem:
                 # )
                 # logger.debug(f"Removed {entity_delete_result.deleted_count} entity mappings")
             
-            # Remove from vector stores (this requires rebuilding)
-            if self.global_vector_store or self.entity_vector_stores:
-                self._rebuild_vector_stores_without_document(doc_id)
+            # Remove from vector store (this requires rebuilding)
+            if self.vector_store:
+                self._rebuild_vector_store_without_document(doc_id)
             
             logger.info(f"Successfully deleted document: {doc_id}")
             return True
@@ -839,44 +541,19 @@ class RAGSystem:
             logger.error(f"Failed to delete document {doc_id}: {e}")
             return False
         
-    def _rebuild_vector_stores_without_document(self, doc_id_to_remove: Optional[str]):
+    def _rebuild_vector_store_without_document(self, doc_id_to_remove: Optional[str]):
         """
-        Rebuild both global and entity-specific vector stores excluding a specific document
+        Rebuild vector store excluding a specific document
         This is expensive but necessary for FAISS
         """
-        logger.info(f"Rebuilding vector stores without document: {doc_id_to_remove}")
-
-        try:
-            # Get document info to find which entities it belonged to
-            doc_info = self.storage.find_one_doc_mapping({"doc_id": doc_id_to_remove})
-
-            affected_entities = []
-            if doc_info and "entity_ids" in doc_info:
-                affected_entities = doc_info["entity_ids"]
-
-            # Rebuild global vector store
-            self._rebuild_global_vector_store_without_document(doc_id_to_remove)
-
-            # Rebuild affected entity vector stores
-            for entity_id in affected_entities:
-                if entity_id in self.entity_vector_stores:
-                    self._rebuild_entity_vector_store_without_document(entity_id, doc_id_to_remove)
-
-        except Exception as e:
-            logger.error(f"Failed to rebuild vector stores: {e}")
-            raise
-
-    def _rebuild_global_vector_store_without_document(self, doc_id_to_remove: Optional[str]):
-        """
-        Rebuild global vector store excluding a specific document
-        This is expensive but necessary for FAISS
-        """
-        logger.info(f"Rebuilding global vector store without document: {doc_id_to_remove}")
+        logger.info(f"Rebuilding vector store without document: {doc_id_to_remove}")
         
         try:
-            # Get all remaining documents from JSON storage
-            all_docs = self.storage.find_doc_mappings()
-            remaining_docs = [doc for doc in all_docs if doc.get("doc_id") != doc_id_to_remove]
+            # Get all remaining documents from storage
+            with get_storage_session() as db:
+                remaining_docs = list(db[Config.DOC_ID_NAME_MAPPING_COLLECTION].find(
+                    {"doc_id": {"$ne": doc_id_to_remove}}
+                ))
             
             if not remaining_docs:
                 logger.info("No documents remaining, clearing vector store")
@@ -901,10 +578,10 @@ class RAGSystem:
                     except Exception as e:
                         logger.error(f"Failed to reload document {doc_path}: {e}")
             
-            # Rebuild global vector store
+            # Rebuild vector store
             if all_documents:
                 if self.embeddings:
-                    self.global_vector_store = FAISS.from_documents(
+                    self.vector_store = FAISS.from_documents(
                                             [
                                                 Document(
                                                     page_content=doc['chunk']['content'],
@@ -918,90 +595,16 @@ class RAGSystem:
                 # Rebuild indices for efficient filtering
                 self._update_chunk_indices(all_documents, 0)
 
-                logger.info(f"Rebuilt global vector store with {len(all_documents)} document chunks")
+                logger.info(f"Rebuilt vector store with {len(all_documents)} document chunks")
 
-                # Save the rebuilt vector stores
-                self.save_vector_stores()
+                # Save the rebuilt vector store
+                self.save_vector_store()
             else:
-                logger.warning("No valid documents found for global vector store rebuild")
+                logger.warning("No valid documents found for vector store rebuild")
                 # Clear indices if no documents
                 self.entity_to_chunks.clear()
                 self.doc_to_chunks.clear()
                 self.chunk_metadata.clear()
-
-        except Exception as e:
-            logger.error(f"Failed to rebuild global vector store: {e}")
-            raise
-
-    def _rebuild_entity_vector_store_without_document(self, entity_id: str, doc_id_to_remove: Optional[str]):
-        """
-        Rebuild entity-specific vector store excluding a specific document
-        """
-        logger.info(f"Rebuilding entity vector store for {entity_id} without document: {doc_id_to_remove}")
-
-        try:
-            # Get all remaining documents for this entity from JSON storage
-            all_docs = self.storage.find_doc_mappings({"entity_ids": entity_id})
-            remaining_docs = [doc for doc in all_docs if doc.get("doc_id") != doc_id_to_remove]
-
-            if not remaining_docs:
-                logger.info(f"No documents remaining for entity {entity_id}, removing vector store")
-                del self.entity_vector_stores[entity_id]
-                if entity_id in self.entity_chunk_metadata:
-                    del self.entity_chunk_metadata[entity_id]
-                if entity_id in self.entity_doc_mapping:
-                    del self.entity_doc_mapping[entity_id]
-                return
-
-            # Reload and reprocess all remaining documents for this entity
-            all_documents: List[Dict[str, Dict[str, Any]]] = []
-
-            for doc_info in remaining_docs:
-                doc_path = doc_info.get("doc_path")
-
-                if doc_path and os.path.exists(doc_path):
-                    try:
-                        split_docs = self._load_document(doc_path, entity_id)
-
-                        if split_docs:
-                            all_documents.extend(split_docs)
-                            logger.debug(f"Reloaded document for entity {entity_id}: {doc_path}")
-                    except Exception as e:
-                        logger.error(f"Failed to reload document {doc_path} for entity {entity_id}: {e}")
-
-            # Rebuild entity vector store
-            if all_documents:
-                if self.embeddings:
-                    self.entity_vector_stores[entity_id] = FAISS.from_documents(
-                        [
-                            Document(
-                                page_content=doc['chunk']['content'],
-                                metadata=doc
-                            )
-                            for doc in all_documents
-                        ],
-                        self.embeddings
-                    )
-
-                # Rebuild entity-specific indices
-                self.entity_chunk_metadata[entity_id] = {}
-                self.entity_doc_mapping[entity_id] = {}
-                self._update_entity_chunk_indices(entity_id, all_documents, 0)
-
-                logger.info(f"Rebuilt entity vector store for {entity_id} with {len(all_documents)} document chunks")
-            else:
-                logger.warning(f"No valid documents found for entity {entity_id} vector store rebuild")
-                # Remove empty entity store
-                if entity_id in self.entity_vector_stores:
-                    del self.entity_vector_stores[entity_id]
-                if entity_id in self.entity_chunk_metadata:
-                    del self.entity_chunk_metadata[entity_id]
-                if entity_id in self.entity_doc_mapping:
-                    del self.entity_doc_mapping[entity_id]
-
-        except Exception as e:
-            logger.error(f"Failed to rebuild entity vector store for {entity_id}: {e}")
-            raise
                 
         except Exception as e:
             logger.error(f"Failed to rebuild vector store: {e}")
@@ -1014,20 +617,16 @@ class RAGSystem:
         try:
             # Get file extension
             file_ext = Path(file_path).suffix.lower()
-            
-            # Convert file to markdown
-            markdown_content = convert_to_md(file_path)
-            if markdown_content is None:
-                logger.error(f"Failed to convert file to markdown: {file_path}")
+
+            # Use file processing API to chunk the file
+            chunk_result = chunk_file(file_path, source=file_path)
+
+            if not chunk_result.get('success', False):
+                logger.error(f"Failed to chunk file: {file_path}")
                 return []
-            
-            # You can implement chunking logic here, e.g.:
-            chunks = chunk_by_MarkDownSplitter(
-                [markdown_content],
-                "Qwen/Qwen2.5-32B-Instruct",
-                sources=[file_path]
-            )
-            
+
+            chunks = chunk_result.get('chunks', [])
+
             logger.debug(f"Loaded {len(chunks)} raw chunks from: {file_path}")
             
             if not chunks:
@@ -1086,13 +685,18 @@ class RAGSystem:
             
             update_data: Dict[str, Dict[str, Any]] = {
                 "$set": mapping_data,
-                "$setOnInsert": {"doc_id": doc_id} 
+                "$setOnInsert": {"doc_id": doc_id}
             }
             if entity_id:
                 update_data["$addToSet"] = {"entity_ids": entity_id}
-            
-            self.storage.update_doc_mapping(doc_id, update_data, upsert=True)
-            logger.debug(f"Document mapping updated for doc_id: {doc_id}")
+
+            with get_storage_session() as db:
+                result = db[Config.DOC_ID_NAME_MAPPING_COLLECTION].update_one(
+                    {"doc_id": doc_id},
+                    update_data,
+                    upsert=True
+                )
+                logger.debug(f"Document mapping update result - matched: {result.matched_count}, modified: {result.modified_count}")
         except Exception as e:
             logger.error(f"Failed to update doc-id mapping: {e}")
     
@@ -1161,11 +765,11 @@ class RAGSystem:
         logger.debug(f"Updated indices for {len(documents)} chunks")
 
     def _rebuild_indices_from_vector_store(self):
-        """Rebuild indices from existing global vector store"""
-        if not self.global_vector_store:
+        """Rebuild indices from existing vector store"""
+        if not self.vector_store:
             return
 
-        logger.info("Rebuilding chunk indices from global vector store")
+        logger.info("Rebuilding chunk indices from vector store")
 
         # Clear existing indices
         self.entity_to_chunks.clear()
@@ -1175,14 +779,14 @@ class RAGSystem:
         # Get all documents from vector store
         try:
             # Access the docstore to get all documents
-            docstore = self.global_vector_store.docstore
-            index_to_docstore_id = self.global_vector_store.index_to_docstore_id
+            docstore = self.vector_store.docstore
+            index_to_docstore_id = self.vector_store.index_to_docstore_id
 
             for i in range(len(index_to_docstore_id)):
                 docstore_id = index_to_docstore_id[i]
                 doc = docstore.search(docstore_id)
 
-                if doc and hasattr(doc, 'metadata') and isinstance(getattr(doc, 'metadata', None), dict):
+                if doc and hasattr(doc, 'metadata'):
                     doc_metadata = doc.metadata
                     self.chunk_metadata[i] = doc_metadata
 
@@ -1253,31 +857,32 @@ class RAGSystem:
             logger.info(f"Sample chunk metadata: {sample_metadata}")
 
     def _rebuild_indices_fallback(self):
-        """Fallback method to rebuild indices by querying JSON storage"""
+        """Fallback method to rebuild indices by querying database"""
         logger.info("Using fallback method to rebuild indices")
 
         try:
-            # Get all chunks from JSON storage
-            chunks = self.storage.find_chunks()
+            with get_storage_session() as db:
+                # Get all chunks from storage
+                chunks = list(db[Config.CHUNKS_COLLECTION].find({}))
 
-            for i, chunk in enumerate(chunks):
-                metadata = chunk.get('metadata', {})
-                self.chunk_metadata[i] = metadata
+                for i, chunk in enumerate(chunks):
+                    metadata = chunk.get('metadata', {})
+                    self.chunk_metadata[i] = metadata
 
-                # Update doc_id mapping
-                doc_id = metadata.get('doc_id')
-                if doc_id:
-                    if doc_id not in self.doc_to_chunks:
-                        self.doc_to_chunks[doc_id] = set()
-                    self.doc_to_chunks[doc_id].add(i)
+                    # Update doc_id mapping
+                    doc_id = metadata.get('doc_id')
+                    if doc_id:
+                        if doc_id not in self.doc_to_chunks:
+                            self.doc_to_chunks[doc_id] = set()
+                        self.doc_to_chunks[doc_id].add(i)
 
-                # Update entity_id mappings
-                entity_ids = metadata.get('entity_ids', [])
-                for entity_id in entity_ids:
-                    if entity_id:
-                        if entity_id not in self.entity_to_chunks:
-                            self.entity_to_chunks[entity_id] = set()
-                        self.entity_to_chunks[entity_id].add(i)
+                    # Update entity_id mappings
+                    entity_ids = metadata.get('entity_ids', [])
+                    for entity_id in entity_ids:
+                        if entity_id:
+                            if entity_id not in self.entity_to_chunks:
+                                self.entity_to_chunks[entity_id] = set()
+                            self.entity_to_chunks[entity_id].add(i)
 
             logger.info(f"Rebuilt indices using fallback for {len(chunks)} chunks")
 
@@ -1286,13 +891,13 @@ class RAGSystem:
     
     def search_all_documents(self, query: str, k: int = 5) -> List[Document]:
         logger.debug(f"Performing global search with query: '{query}', k={k}")
-
-        if self.global_vector_store is None:
-            logger.warning("No global vector store loaded - cannot perform search")
+        
+        if self.vector_store is None:
+            logger.warning("No vector store loaded - cannot perform search")
             return []
 
         try:
-            results = self.global_vector_store.similarity_search(query, k=k)
+            results = self.vector_store.similarity_search(query, k=k)
             logger.info(f"Global search returned {len(results)} results for query: '{query}'")
             return results
         except Exception as e:
@@ -1308,67 +913,23 @@ class RAGSystem:
     ) -> List[Document]:
         logger.debug(f"Performing filtered search with query: '{query}', k={k}, doc_ids={doc_ids}, entity_ids={entity_ids}")
 
+        if self.vector_store is None:
+            logger.warning("No vector store loaded - cannot perform search")
+            return []
+
         try:
-            # If single entity_id specified, use entity-specific index for better performance
-            if entity_ids and len(entity_ids) == 1 and not doc_ids:
-                return self.search_entity_documents(entity_ids[0], query, k)
-
-            # If multiple entities specified, search each entity index and combine results
-            if entity_ids and not doc_ids:
-                return self._search_multiple_entities(query, k, entity_ids)
-
-            # Fallback to global search with filtering
-            if self.global_vector_store is None:
-                logger.warning("No global vector store loaded - cannot perform search")
-                return []
-
             # Use optimized pre-filtering if filters are specified
             if doc_ids or entity_ids:
                 return self._search_with_prefiltering(query, k, doc_ids, entity_ids)
             else:
                 # Fallback to global search
-                results = self.global_vector_store.similarity_search(query, k=k)
+                results = self.vector_store.similarity_search(query, k=k)
                 logger.info(f"Global search returned {len(results)} results for query: '{query}'")
                 return results
 
         except Exception as e:
             logger.error(f"Error during similarity search with filters: {e}")
             return []
-
-    def search_entity_documents(self, entity_id: str, query: str, k: int = 5) -> List[Document]:
-        """Search documents within a specific entity using its dedicated vector store"""
-        logger.debug(f"Performing entity-specific search for entity: '{entity_id}' with query: '{query}', k={k}")
-
-        if entity_id not in self.entity_vector_stores:
-            logger.warning(f"No vector store found for entity: {entity_id}")
-            return []
-
-        try:
-            entity_store = self.entity_vector_stores[entity_id]
-            results = entity_store.similarity_search(query, k=k)
-            logger.info(f"Entity search returned {len(results)} results for entity '{entity_id}' with query: '{query}'")
-            return results
-        except Exception as e:
-            logger.error(f"Error during entity-specific search for {entity_id}: {e}")
-            return []
-
-    def _search_multiple_entities(self, query: str, k: int, entity_ids: List[str]) -> List[Document]:
-        """Search across multiple entity-specific indexes and combine results"""
-        logger.debug(f"Performing multi-entity search for entities: {entity_ids} with query: '{query}', k={k}")
-
-        all_results = []
-        k_per_entity = max(1, k // len(entity_ids))  # Distribute k across entities
-        remainder = k % len(entity_ids)
-
-        for i, entity_id in enumerate(entity_ids):
-            # Give some entities one extra result if k doesn't divide evenly
-            entity_k = k_per_entity + (1 if i < remainder else 0)
-            entity_results = self.search_entity_documents(entity_id, query, entity_k)
-            all_results.extend(entity_results)
-
-        # Sort combined results by relevance (if similarity scores are available)
-        # For now, just return first k results
-        return all_results[:k]
 
     def _search_with_prefiltering(
         self,
@@ -1421,7 +982,7 @@ class RAGSystem:
         logger.debug(f"Pre-filtering found {len(relevant_indices)} relevant chunks")
 
         # Create a subset vector store or search with index filtering
-        if hasattr(self.global_vector_store, 'similarity_search_by_vector'):
+        if hasattr(self.vector_store, 'similarity_search_by_vector'):
             # Use FAISS search with index filtering
             return self._search_with_index_filtering(query, k, relevant_indices)
         else:
@@ -1431,14 +992,14 @@ class RAGSystem:
     def _search_with_index_filtering(self, query: str, k: int, relevant_indices: List[int]) -> List[Document]:
         """Search using FAISS index filtering for better performance"""
         try:
-            if not self.embeddings or not self.global_vector_store:
+            if not self.embeddings or not self.vector_store:
                 return []
 
             # Get query embedding
             query_embedding = self.embeddings.embed_query(query)
 
             # Search all vectors and get similarities with indices
-            all_scores, all_indices = self.global_vector_store.index.search(
+            all_scores, all_indices = self.vector_store.index.search(
                 np.array([query_embedding], dtype=np.float32),
                 len(self.chunk_metadata)  # Get all results
             )
@@ -1450,8 +1011,8 @@ class RAGSystem:
             for idx in all_indices[0]:
                 if idx in relevant_indices_set and len(filtered_results) < k:
                     # Get document from docstore
-                    docstore_id = self.global_vector_store.index_to_docstore_id[idx]
-                    doc = self.global_vector_store.docstore.search(docstore_id)
+                    docstore_id = self.vector_store.index_to_docstore_id[idx]
+                    doc = self.vector_store.docstore.search(docstore_id)
                     if doc:
                         filtered_results.append(doc)
 
@@ -1473,7 +1034,7 @@ class RAGSystem:
         """Fallback search using metadata filtering"""
         logger.debug("Using metadata filtering fallback")
 
-        if not self.global_vector_store:
+        if not self.vector_store:
             return []
 
         def create_filter_func():
@@ -1498,7 +1059,7 @@ class RAGSystem:
             return filter_func
 
         filter_func = create_filter_func()
-        results = self.global_vector_store.similarity_search(query, k=k, filter=filter_func, fetch_k=10000)
+        results = self.vector_store.similarity_search(query, k=k, filter=filter_func, fetch_k=10000)
         logger.debug(f"Metadata filtering returned {len(results)} results")
         return results
 
@@ -1509,15 +1070,16 @@ class RAGSystem:
     def get_chunk_by_id(self, doc_id: str, chunk_order_index: int) -> Optional[Dict[str, Any]]:
         """Get a specific chunk by doc_id and chunk_order_index"""
         try:
-            chunk_id = f"chunk_{doc_id}_{chunk_order_index}"
-            chunk = self.storage.find_one_chunk({"_id": chunk_id})
+            with get_storage_session() as db:
+                chunk_id = f"chunk_{doc_id}_{chunk_order_index}"
+                chunk = db[Config.CHUNKS_COLLECTION].find_one({"_id": chunk_id})
 
-            if chunk:
-                logger.debug(f"Found chunk: {chunk_id}")
-                return chunk
-            else:
-                logger.debug(f"Chunk not found: {chunk_id}")
-                return None
+                if chunk:
+                    logger.debug(f"Found chunk: {chunk_id}")
+                    return chunk
+                else:
+                    logger.debug(f"Chunk not found: {chunk_id}")
+                    return None
 
         except Exception as e:
             logger.error(f"Error getting chunk {doc_id}:{chunk_order_index}: {e}")
@@ -1597,8 +1159,8 @@ class RAGSystem:
         """Semantic search scoped to a specific entity with chunk metadata"""
         logger.debug(f"Semantic search within entity {entity_id}: {query}")
 
-        # Use entity-specific vector store for better performance
-        results = self.search_entity_documents(entity_id, query, k)
+        # Use existing filtered search
+        results = self.search_documents(query, k=k, entity_ids=[entity_id])
 
         # Convert to format with chunk navigation info
         enhanced_results = []
@@ -1658,13 +1220,21 @@ class RAGSystem:
         logger.debug(f"Getting all chunks for document: {doc_id}")
 
         try:
-            chunks = self.storage.find_chunks({"metadata.doc_id": doc_id})
+            with get_storage_session() as db:
+                # Get chunks and sort them manually (JSONStorage doesn't support chained sort)
+                chunks = db[Config.CHUNKS_COLLECTION].find(
+                    {"metadata.doc_id": doc_id}
+                )
 
-            # Sort by chunk order index
-            chunks.sort(key=lambda x: x.get("chunk", {}).get("chunk_order_index", 0))
+                # Sort by chunk_order_index
+                if chunks:
+                    chunks = sorted(
+                        chunks,
+                        key=lambda x: x.get('chunk', {}).get('chunk_order_index', 0)
+                    )
 
-            logger.info(f"Found {len(chunks)} chunks for document {doc_id}")
-            return chunks
+                logger.info(f"Found {len(chunks)} chunks for document {doc_id}")
+                return chunks
 
         except Exception as e:
             logger.error(f"Error getting document chunks {doc_id}: {e}")
@@ -1675,10 +1245,13 @@ class RAGSystem:
         logger.debug(f"Getting documents for entity: {entity_id}")
 
         try:
-            docs = self.storage.find_doc_mappings({"entity_ids": entity_id})
+            with get_storage_session() as db:
+                docs = list(db[Config.DOC_ID_NAME_MAPPING_COLLECTION].find(
+                    {"entity_ids": entity_id}
+                ))
 
-            logger.info(f"Found {len(docs)} documents for entity {entity_id}")
-            return docs
+                logger.info(f"Found {len(docs)} documents for entity {entity_id}")
+                return docs
 
         except Exception as e:
             logger.error(f"Error getting entity documents {entity_id}: {e}")
@@ -1724,114 +1297,6 @@ class RAGSystem:
             'total_found': len(search_results)
         }
     
-    def _create_or_update_entity_vector_stores(self, documents: List[Dict[str, Dict[str, Any]]], entity_ids: List[str]):
-        """Create or update entity-specific vector stores with documents"""
-        logger.debug(f"Creating/updating entity vector stores for entities: {entity_ids} with {len(documents)} documents")
-
-        try:
-            for entity_id in entity_ids:
-                if not entity_id:
-                    continue
-
-                # Initialize entity tracking if not exists
-                if entity_id not in self.entity_chunk_metadata:
-                    self.entity_chunk_metadata[entity_id] = {}
-                if entity_id not in self.entity_doc_mapping:
-                    self.entity_doc_mapping[entity_id] = {}
-
-                # Create FAISS documents
-                faiss_documents = [
-                    Document(
-                        page_content=doc['chunk']['content'],
-                        metadata=doc
-                    )
-                    for doc in documents
-                ]
-
-                start_idx = 0  # Initialize default value
-
-                if entity_id in self.entity_vector_stores:
-                    # Add to existing entity vector store
-                    start_idx = len(self.entity_chunk_metadata[entity_id])
-                    self.entity_vector_stores[entity_id].add_documents(faiss_documents)
-                    logger.debug(f"Added {len(documents)} documents to existing entity store: {entity_id}")
-                else:
-                    # Create new entity vector store
-                    if self.embeddings:
-                        self.entity_vector_stores[entity_id] = FAISS.from_documents(
-                            faiss_documents,
-                            self.embeddings
-                        )
-                        start_idx = 0
-                        logger.info(f"Created new entity vector store: {entity_id} with {len(documents)} documents")
-
-                # Update entity-specific metadata
-                self._update_entity_chunk_indices(entity_id, documents, start_idx)
-
-        except Exception as e:
-            logger.error(f"Failed to create/update entity vector stores: {e}")
-            raise
-
-    def _create_or_update_global_vector_store(self, documents: List[Dict[str, Dict[str, Any]]]):
-        """Create or update the global vector store for cross-entity search"""
-        logger.debug(f"Creating/updating global vector store with {len(documents)} documents")
-
-        try:
-            faiss_documents = [
-                Document(
-                    page_content=doc['chunk']['content'],
-                    metadata=doc
-                )
-                for doc in documents
-            ]
-
-            if self.global_vector_store:
-                start_idx = len(self.chunk_metadata)
-                self.global_vector_store.add_documents(faiss_documents)
-                # Update global indices for backward compatibility
-                self._update_chunk_indices(documents, start_idx)
-                logger.info(f"Added {len(documents)} documents to existing global vector store")
-            else:
-                if self.embeddings:
-                    self.global_vector_store = FAISS.from_documents(
-                        faiss_documents,
-                        self.embeddings
-                    )
-                # Build global indices for backward compatibility
-                self._update_chunk_indices(documents, 0)
-                logger.info(f"Created new global vector store with {len(documents)} documents")
-        except Exception as e:
-            logger.error(f"Failed to create/update global vector store: {e}")
-            raise
-
-    def _update_entity_chunk_indices(self, entity_id: str, documents: List[Dict[str, Dict[str, Any]]], start_idx: int):
-        """Update chunk indices for specific entity"""
-        logger.debug(f"Updating entity chunk indices for {entity_id} starting from index {start_idx}")
-
-        for i, doc in enumerate(documents):
-            chunk_idx = start_idx + i
-            metadata = doc['metadata']
-
-            # Store chunk metadata for this entity
-            self.entity_chunk_metadata[entity_id][chunk_idx] = metadata
-
-            # Update entity doc mapping
-            doc_id = metadata.get('doc_id')
-            if doc_id:
-                if doc_id not in self.entity_doc_mapping[entity_id]:
-                    self.entity_doc_mapping[entity_id][doc_id] = set()
-                self.entity_doc_mapping[entity_id][doc_id].add(chunk_idx)
-
-        logger.debug(f"Updated entity indices for {len(documents)} chunks in entity {entity_id}")
-
-    def get_entity_vector_store(self, entity_id: str) -> Optional[FAISS]:
-        """Get vector store for specific entity"""
-        return self.entity_vector_stores.get(entity_id)
-
-    def get_available_entities(self) -> List[str]:
-        """Get list of all entities with vector stores"""
-        return list(self.entity_vector_stores.keys())
-
     def save_vector_store(self, save_path: Optional[str]=None):
         if not save_path:
             save_path = self.vector_store_path
@@ -1846,130 +1311,6 @@ class RAGSystem:
                 logger.error(f"Failed to save vector store: {e}")
         else:
             logger.warning("No vector store to save")
-
-    def save_vector_stores(self, save_path: Optional[str]=None):
-        """Save all entity-specific vector stores and global vector store"""
-        if not save_path:
-            save_path = self.vector_store_path
-        logger.info(f"Attempting to save vector stores to: {save_path}")
-
-        try:
-            os.makedirs(save_path, exist_ok=True)
-
-            # Save global vector store
-            if self.global_vector_store:
-                global_path = os.path.join(save_path, "global")
-                os.makedirs(global_path, exist_ok=True)
-                self.global_vector_store.save_local(global_path)
-                logger.info(f"Saved global vector store at {global_path}")
-
-            # Save entity-specific vector stores
-            entities_path = os.path.join(save_path, "entities")
-            os.makedirs(entities_path, exist_ok=True)
-
-            for entity_id, vector_store in self.entity_vector_stores.items():
-                entity_path = os.path.join(entities_path, entity_id.replace("/", "_"))
-                os.makedirs(entity_path, exist_ok=True)
-                vector_store.save_local(entity_path)
-                logger.debug(f"Saved entity vector store for {entity_id} at {entity_path}")
-
-            logger.info(f"Successfully saved {len(self.entity_vector_stores)} entity vector stores")
-
-        except Exception as e:
-            logger.error(f"Failed to save vector stores: {e}")
-
-    def load_vector_stores(self, load_path: Optional[str]=None):
-        """Load all entity-specific vector stores and global vector store"""
-        if load_path is None:
-            load_path = self.vector_store_path
-
-        logger.info(f"Attempting to load vector stores from: {load_path}")
-
-        if not os.path.exists(load_path):
-            logger.warning(f"Vector stores path does not exist: {load_path}")
-            return
-
-        try:
-            # Load global vector store
-            global_path = os.path.join(load_path, "global")
-            if os.path.exists(global_path) and self.embeddings:
-                self.global_vector_store = FAISS.load_local(
-                    global_path,
-                    self.embeddings,
-                    allow_dangerous_deserialization=True
-                )
-                logger.info(f"Successfully loaded global vector store from {global_path}")
-                # Rebuild global indices for backward compatibility
-                self._rebuild_indices_from_vector_store()
-
-            # Load entity-specific vector stores
-            entities_path = os.path.join(load_path, "entities")
-            if os.path.exists(entities_path):
-                for entity_dir in os.listdir(entities_path):
-                    entity_path = os.path.join(entities_path, entity_dir)
-                    if os.path.isdir(entity_path):
-                        entity_id = entity_dir.replace("_", "/")
-                        try:
-                            if self.embeddings:
-                                self.entity_vector_stores[entity_id] = FAISS.load_local(
-                                    entity_path,
-                                    self.embeddings,
-                                    allow_dangerous_deserialization=True
-                                )
-                                logger.debug(f"Loaded entity vector store for {entity_id}")
-                        except Exception as e:
-                            logger.error(f"Failed to load entity vector store for {entity_id}: {e}")
-
-                logger.info(f"Successfully loaded {len(self.entity_vector_stores)} entity vector stores")
-
-            # Rebuild entity-specific indices
-            self._rebuild_entity_indices()
-
-        except Exception as e:
-            logger.error(f"Failed to load vector stores: {e}")
-
-    def _rebuild_entity_indices(self):
-        """Rebuild entity-specific indices from loaded vector stores"""
-        logger.info("Rebuilding entity-specific indices from vector stores")
-
-        # Clear existing entity indices
-        self.entity_chunk_metadata.clear()
-        self.entity_doc_mapping.clear()
-
-        for entity_id, vector_store in self.entity_vector_stores.items():
-            try:
-                self.entity_chunk_metadata[entity_id] = {}
-                self.entity_doc_mapping[entity_id] = {}
-
-                # Access the docstore to get all documents
-                docstore = vector_store.docstore
-                index_to_docstore_id = vector_store.index_to_docstore_id
-
-                for i in range(len(index_to_docstore_id)):
-                    docstore_id = index_to_docstore_id[i]
-                    doc = docstore.search(docstore_id)
-
-                    if doc and hasattr(doc, 'metadata') and isinstance(getattr(doc, 'metadata', None), dict):
-                        doc_metadata = doc.metadata
-                        self.entity_chunk_metadata[entity_id][i] = doc_metadata
-
-                        # Handle nested metadata structure
-                        if 'metadata' in doc_metadata and isinstance(doc_metadata['metadata'], dict):
-                            working_metadata = doc_metadata['metadata']
-                        else:
-                            working_metadata = doc_metadata
-
-                        # Update doc mapping for this entity
-                        doc_id = working_metadata.get('doc_id')
-                        if doc_id:
-                            if doc_id not in self.entity_doc_mapping[entity_id]:
-                                self.entity_doc_mapping[entity_id][doc_id] = set()
-                            self.entity_doc_mapping[entity_id][doc_id].add(i)
-
-                logger.debug(f"Rebuilt indices for entity {entity_id} with {len(self.entity_chunk_metadata[entity_id])} chunks")
-
-            except Exception as e:
-                logger.error(f"Failed to rebuild indices for entity {entity_id}: {e}")
 
     def load_vector_store(self, load_path: Optional[str]=None):
         """Load vector store from disk"""
@@ -2040,3 +1381,158 @@ def debug_entity_search(entity_id: str):
             rag.debug_entity_mappings(entity_id)
     except Exception as e:
         logger.error(f"Failed to debug entity mappings: {e}")
+
+
+# ============================================================================
+# ENTITY-SCOPED RAG FUNCTIONS - Parallel Processing with Isolated Indexes
+# ============================================================================
+
+def index_document_entity_scoped(entity_id: str, file_path: str,
+                                metadata: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    """
+    Index a document to an entity-scoped vector store (faster, isolated access)
+
+    Args:
+        entity_id: Entity identifier
+        file_path: Path to document
+        metadata: Optional metadata
+
+    Returns:
+        Document info dict
+    """
+    try:
+        manager = get_entity_rag_manager()
+        return manager.add_document(entity_id, file_path, metadata)
+    except Exception as e:
+        logger.error(f"Failed to index document for entity {entity_id}: {e}")
+        return None
+
+
+def index_documents_parallel(entity_documents: Dict[str, List[str]],
+                            metadata: Optional[Dict[str, Any]] = None) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Index documents for multiple entities in parallel
+
+    Args:
+        entity_documents: Dict mapping entity_id -> list of file paths
+        metadata: Optional metadata for all documents
+
+    Returns:
+        Dict mapping entity_id -> list of document info dicts
+
+    Example:
+        >>> results = index_documents_parallel({
+        ...     "company_123": ["/path/to/doc1.pdf", "/path/to/doc2.pdf"],
+        ...     "company_456": ["/path/to/doc3.pdf"]
+        ... })
+    """
+    try:
+        manager = get_entity_rag_manager()
+        return manager.add_documents_parallel(entity_documents, metadata)
+    except Exception as e:
+        logger.error(f"Failed to index documents in parallel: {e}")
+        return {}
+
+
+def search_entity_scoped(entity_id: str, query: str, k: int = 5,
+                        doc_ids: Optional[List[str]] = None) -> List[Document]:
+    """
+    Search within a specific entity's isolated vector store (faster than global search)
+
+    Args:
+        entity_id: Entity identifier
+        query: Search query
+        k: Number of results
+        doc_ids: Optional document filter
+
+    Returns:
+        List of matching documents
+    """
+    try:
+        manager = get_entity_rag_manager()
+        return manager.search(entity_id, query, k, doc_ids)
+    except Exception as e:
+        logger.error(f"Failed to search entity {entity_id}: {e}")
+        return []
+
+
+def search_multiple_entities_parallel(entity_ids: List[str], query: str,
+                                      k: int = 5) -> Dict[str, List[Document]]:
+    """
+    Search across multiple entities in parallel
+
+    Args:
+        entity_ids: List of entity identifiers
+        query: Search query
+        k: Number of results per entity
+
+    Returns:
+        Dict mapping entity_id -> list of documents
+
+    Example:
+        >>> results = search_multiple_entities_parallel(
+        ...     ["company_123", "company_456"],
+        ...     "What are the key findings?",
+        ...     k=3
+        ... )
+        >>> for entity_id, docs in results.items():
+        ...     print(f"{entity_id}: {len(docs)} results")
+    """
+    try:
+        manager = get_entity_rag_manager()
+        return manager.search_multiple_entities(entity_ids, query, k)
+    except Exception as e:
+        logger.error(f"Failed to search multiple entities: {e}")
+        return {}
+
+
+def delete_document_entity_scoped(entity_id: str, doc_id: str) -> bool:
+    """
+    Delete a document from an entity's vector store
+
+    Args:
+        entity_id: Entity identifier
+        doc_id: Document identifier
+
+    Returns:
+        True if successful
+    """
+    try:
+        manager = get_entity_rag_manager()
+        return manager.delete_document(entity_id, doc_id)
+    except Exception as e:
+        logger.error(f"Failed to delete document {doc_id} from entity {entity_id}: {e}")
+        return False
+
+
+def get_entity_stats(entity_id: str) -> Dict[str, Any]:
+    """
+    Get statistics for an entity's vector store
+
+    Args:
+        entity_id: Entity identifier
+
+    Returns:
+        Statistics dict
+    """
+    try:
+        manager = get_entity_rag_manager()
+        return manager.get_entity_stats(entity_id)
+    except Exception as e:
+        logger.error(f"Failed to get stats for entity {entity_id}: {e}")
+        return {}
+
+
+def get_all_entity_stats() -> Dict[str, Dict[str, Any]]:
+    """
+    Get statistics for all entities
+
+    Returns:
+        Dict mapping entity_id -> statistics
+    """
+    try:
+        manager = get_entity_rag_manager()
+        return manager.get_all_entity_stats()
+    except Exception as e:
+        logger.error(f"Failed to get all entity stats: {e}")
+        return {}

@@ -1,5 +1,8 @@
 """Infrastructure modules for external services"""
 
-from .database.mongodb import get_db_session, mongo_pool
+from .file_processor.client import chunk_file, parse_file
 
-__all__ = ['get_db_session', 'mongo_pool']
+__all__ = [
+    'parse_file',
+    'chunk_file'
+]
