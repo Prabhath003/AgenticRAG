@@ -747,10 +747,19 @@ async def upload_file(
 
         # Save uploaded file
         file_path = UPLOAD_DIR / entity_id / file.filename
-        file_path.parent.mkdir(parents=True, exist_ok=True)
+        # Normalize and validate that file_path stays within UPLOAD_DIR
+        try:
+            resolved_file_path = file_path.resolve()
+            # Check that resolved_file_path is within UPLOAD_DIR
+            if UPLOAD_DIR.resolve() not in resolved_file_path.parents and UPLOAD_DIR.resolve() != resolved_file_path.parent:
+                raise HTTPException(status_code=400, detail="Invalid file path - path traversal detected")
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid file path")
+
+        resolved_file_path.parent.mkdir(parents=True, exist_ok=True)
 
         content = await file.read()
-        with open(file_path, "wb") as f:
+        with open(resolved_file_path, "wb") as f:
             f.write(content)
 
         # Create task record
