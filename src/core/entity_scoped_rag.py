@@ -28,6 +28,7 @@ from contextlib import contextmanager
 import hashlib
 from uuid import uuid4
 import mimetypes
+import time
 import requests
 
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -265,8 +266,33 @@ class EntityVectorStore:
                     params=params
                 )
                 response.raise_for_status()
-                chunk_result = response.json()
-                # chunk_result = chunk_file(file_path, source=source)
+                task_info = response.json()
+                task_id = task_info['task_id']
+                
+                poll_interval = 5  # Start with 5 seconds
+
+                while True:
+                    status_response = requests.get(
+                        f"http://localhost:8003/status/{task_id}"
+                    )
+                    status_response.raise_for_status()
+                    status = status_response.json()
+                    
+                    if status['status'] == 'completed':
+                        break
+                    elif status['status'] == 'failed':
+                        raise Exception(f"Task failed: {status.get('error')}")
+                    
+                    # Exponential backoff for polling
+                    time.sleep(poll_interval)
+                    poll_interval = min(poll_interval * 1.5, 5)  # Max 5 seconds
+                    
+                # Get the result
+                result_response = requests.get(
+                    f"http://localhost:8003/result/{task_id}"
+                )
+                result_response.raise_for_status()
+                chunk_result = result_response.json()
 
                 if not chunk_result.get('success', False):
                     raise Exception("File processing API returned unsuccessful")
@@ -656,7 +682,7 @@ class EntityVectorStore:
             with get_storage_session() as db:
                 chunks = list(db[self.chunks_collection].find(
                     {"metadata.doc_id": doc_id}
-                ).sort("chunk.chunk_order_index", 1))
+                ))
 
                 logger.debug(f"Retrieved {len(chunks)} chunks for document {doc_id} from entity {self.entity_id}")
                 return chunks

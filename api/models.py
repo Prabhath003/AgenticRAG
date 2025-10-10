@@ -160,3 +160,35 @@ class ErrorResponse(BaseModel):
     error: str
     detail: Optional[str] = None
     timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+
+class TaskStatus(str, Enum):
+    """Task status enum"""
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class FileUploadTask(BaseModel):
+    """File upload task status"""
+    task_id: str
+    entity_id: str
+    filename: str
+    status: TaskStatus
+    created_at: datetime
+    updated_at: datetime
+    message: Optional[str] = None
+    error: Optional[str] = None
+    result: Optional[FileUploadResponse] = None
+
+
+class TaskStatusResponse(BaseModel):
+    """Response model for task status"""
+    task_id: str
+    status: TaskStatus
+    created_at: datetime
+    updated_at: datetime
+    message: Optional[str] = None
+    error: Optional[str] = None
+    result: Optional[Dict[str, Any]] = None

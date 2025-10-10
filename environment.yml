@@ -120,6 +120,7 @@ dependencies:
       - platformdirs==4.4.0
       - pluggy==1.6.0
       - propcache==0.3.2
+      - psutil==7.1.0
       - pydantic==2.11.9
       - pydantic-core==2.33.2
       - pydantic-settings==2.11.0

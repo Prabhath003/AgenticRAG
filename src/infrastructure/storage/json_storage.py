@@ -765,7 +765,7 @@ def get_storage() -> JSONStorage:
     if _storage_instance is None:
         from ...config import Config
         storage_dir = os.path.join(Config.DATA_DIR, "storage")
-        _storage_instance = JSONStorage(storage_dir)
+        _storage_instance = JSONStorage(storage_dir, enable_sharding=False)
 
     return _storage_instance
 
