@@ -14,23 +14,19 @@
 """FastAPI application for Entity-Scoped RAG System"""
 
 import os
-import sys
 import uuid
 import asyncio
 import time
 import psutil
 import threading
 import queue
-from datetime import datetime
-from typing import Dict, List, Optional, Callable
+from datetime import datetime, timezone
+from typing import Dict, List, Optional, Callable, Any, Tuple
 from pathlib import Path
 from threading import Lock
-from concurrent.futures import Future, as_completed
+from concurrent.futures import Future
 
-# Add src to path
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Form
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
@@ -41,7 +37,7 @@ from .models import (
     ChatSessionCreate, ChatSessionResponse, ChatMessage, ChatMessageRole,
     ChatRequest, ChatResponse,
     SearchRequest, SearchResult, SearchResponse,
-    HealthResponse, ErrorResponse,
+    HealthResponse,
     TaskStatus, FileUploadTask, TaskStatusResponse
 )
 
@@ -55,7 +51,7 @@ from src.core.rag_system import (
 )
 from src.core.entity_scoped_rag import get_entity_rag_manager
 from src.core.agents.research_agent import ResearchAgent
-from src.core.agents.custom_types import ResponseRequiredRequest, Utterance
+from src.core.agents.custom_types import ResponseRequiredRequest
 from src.infrastructure.storage.json_storage import JSONStorage
 from src.log_creator import get_file_logger
 from src.config import Config
@@ -118,7 +114,7 @@ Concurrency Control Design:
 # Configuration for different operation types
 CHAT_MAX_WORKERS = 20      # High throughput for user-facing chat
 UPLOAD_MIN_WORKERS = 2     # Minimum upload workers
-UPLOAD_MAX_WORKERS = max(2, int(os.cpu_count() * 0.8))  # 80% of vCPUs
+UPLOAD_MAX_WORKERS = max(2, int((os.cpu_count() or 2) * 0.8))  # 80% of vCPUs
 SEARCH_MAX_WORKERS = 10    # Moderate for search operations
 
 # Dynamic worker configuration for uploads
@@ -138,7 +134,7 @@ class DynamicThreadPool:
     def __init__(self, min_workers: int = 2, max_workers: int = 10):
         self.min_workers = min_workers
         self.max_workers = max_workers
-        self.task_queue = queue.Queue()
+        self.task_queue: queue.Queue[Optional[Tuple[Callable[..., Any], Tuple[Any, ...], Dict[str, Any], Future[Any]]]] = queue.Queue()
         self.workers: List[threading.Thread] = []
         self.lock = threading.Lock()
         self.shutdown_flag = threading.Event()
@@ -197,9 +193,9 @@ class DynamicThreadPool:
                 # Remove dead workers from list
                 self.workers = [w for w in self.workers if w.is_alive()]
 
-    def submit(self, func: Callable, *args, **kwargs) -> Future:
+    def submit(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Future[Any]:
         """Submit a task to the thread pool"""
-        future = Future()
+        future: Future[Any] = Future()
         self.task_queue.put((func, args, kwargs, future))
         return future
 
@@ -265,7 +261,6 @@ def get_cpu_utilization() -> float:
     """Get current CPU utilization percentage"""
     return psutil.cpu_percent(interval=1)
 
-
 def calculate_optimal_workers(cpu_util: float, queue_size: int = 0) -> int:
     """
     Calculate optimal number of workers based on CPU utilization and queue size
@@ -308,11 +303,10 @@ def calculate_optimal_workers(cpu_util: float, queue_size: int = 0) -> int:
 
     return max(UPLOAD_MIN_WORKERS, min(UPLOAD_MAX_WORKERS, target_workers))
 
-
 def adjust_worker_pool():
     """
     Dynamically adjust thread pool size based on current CPU utilization
-    Enforces cooldown periods to allow new threads to stabilize before further scaling
+    Enforces cool down periods to allow new threads to stabilize before further scaling
     """
     global last_scale_up_time, last_scale_down_time
 
@@ -330,7 +324,7 @@ def adjust_worker_pool():
             is_scale_up = optimal_workers > current_workers
             is_scale_down = optimal_workers < current_workers
 
-            # Check cooldown periods
+            # Check cool down periods
             if is_scale_up:
                 time_since_last_scale_up = current_time - last_scale_up_time
                 if time_since_last_scale_up < SCALE_UP_COOLDOWN:
@@ -344,7 +338,7 @@ def adjust_worker_pool():
                 time_since_last_scale_down = current_time - last_scale_down_time
                 if time_since_last_scale_down < SCALE_DOWN_COOLDOWN:
                     logger.debug(
-                        f"[CPU Monitor] Scale-down blocked (cooldown: {SCALE_DOWN_COOLDOWN - time_since_last_scale_down:.1f}s remaining). "
+                        f"[CPU Monitor] Scale-down blocked (cool down: {SCALE_DOWN_COOLDOWN - time_since_last_scale_down:.1f}s remaining). "
                         f"Current: {current_workers}, Target: {optimal_workers}, CPU: {cpu_util:.1f}%"
                     )
                     return
@@ -373,7 +367,6 @@ def adjust_worker_pool():
     except Exception as e:
         logger.error(f"[CPU Monitor] Error adjusting workers: {str(e)}")
 
-
 async def cpu_monitoring_loop():
     """Background task to monitor CPU and adjust workers"""
     logger.info(f"[CPU Monitor] Started monitoring (interval: {CPU_CHECK_INTERVAL}s)")
@@ -387,7 +380,6 @@ async def cpu_monitoring_loop():
             break
         except Exception as e:
             logger.error(f"[CPU Monitor] Error in monitoring loop: {str(e)}")
-
 
 def get_active_tasks_count(operation_type: str = "all") -> int:
     """Get the current number of active processing tasks"""
@@ -403,7 +395,6 @@ def get_active_tasks_count(operation_type: str = "all") -> int:
             upload_count = upload_executor.get_active_tasks()
             return active_chat_count + upload_count + active_search_count
 
-
 def increment_active_tasks(operation_type: str):
     """Increment the active tasks counter for specific operation type"""
     global active_chat_count, active_search_count
@@ -412,7 +403,6 @@ def increment_active_tasks(operation_type: str):
             active_chat_count += 1
         elif operation_type == "search":
             active_search_count += 1
-
 
 def decrement_active_tasks(operation_type: str):
     """Decrement the active tasks counter for specific operation type"""
@@ -424,12 +414,12 @@ def decrement_active_tasks(operation_type: str):
             active_search_count -= 1
 
 # Helper functions for persistent storage
-def get_entities_db() -> Dict[str, Dict]:
+def get_entities_db() -> Dict[str, Dict[str, Any]]:
     """Get entities database with persistence"""
     data = entities_storage.find(ENTITIES_COLLECTION)
     return {entity["entity_id"]: entity for entity in data}
 
-def save_entity(entity_data: Dict):
+def save_entity(entity_data: Dict[str, Any]):
     """Save entity to persistent storage"""
     # Use update_one with upsert=True to insert or update
     entities_storage.update_one(
@@ -443,16 +433,16 @@ def delete_entity_from_storage(entity_id: str):
     """Delete entity from persistent storage"""
     entities_storage.delete_one(ENTITIES_COLLECTION, {"entity_id": entity_id})
 
-def get_entity_from_storage(entity_id: str) -> Optional[Dict]:
+def get_entity_from_storage(entity_id: str) -> Optional[Dict[str, Any]]:
     """Get entity from persistent storage"""
     return entities_storage.find_one(ENTITIES_COLLECTION, {"entity_id": entity_id})
 
-def get_chat_sessions_db() -> Dict[str, Dict]:
+def get_chat_sessions_db() -> Dict[str, Dict[str, Any]]:
     """Get chat sessions database with persistence"""
     data = chat_sessions_storage.find(CHAT_SESSIONS_COLLECTION)
     return {sess["session_id"]: sess for sess in data}
 
-def save_chat_session(session_data: Dict):
+def save_chat_session(session_data: Dict[str, Any]):
     """Save chat session to persistent storage"""
     # Use update_one with upsert=True to insert or update
     chat_sessions_storage.update_one(
@@ -466,7 +456,7 @@ def delete_chat_session_from_storage(session_id: str):
     """Delete chat session from persistent storage"""
     chat_sessions_storage.delete_one(CHAT_SESSIONS_COLLECTION, {"session_id": session_id})
 
-def get_chat_session_from_storage(session_id: str) -> Optional[Dict]:
+def get_chat_session_from_storage(session_id: str) -> Optional[Dict[str, Any]]:
     """Get chat session from persistent storage"""
     return chat_sessions_storage.find_one(CHAT_SESSIONS_COLLECTION, {"session_id": session_id})
 
@@ -586,7 +576,7 @@ async def list_entities():
 
 
 @app.delete("/api/entities/{entity_id}", tags=["Entities"])
-async def delete_entity(entity_id: str):
+async def delete_entity(entity_id: str) -> Dict[str, Any]:
     """
     Delete an entity and all its data
 
@@ -630,7 +620,6 @@ async def delete_entity(entity_id: str):
         logger.error(f"Error deleting entity: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 # ============================================================================
 # File Management Endpoints
 # ============================================================================
@@ -651,15 +640,15 @@ def _process_file_upload(
         # Update task status to processing
         with upload_tasks_lock:
             upload_tasks[task_id].status = TaskStatus.PROCESSING
-            upload_tasks[task_id].updated_at = datetime.utcnow()
+            upload_tasks[task_id].updated_at = datetime.now(timezone.utc)
             upload_tasks[task_id].message = "Processing file upload"
 
         logger.info(f"Processing file upload for task {task_id} (active: {get_active_tasks_count('upload')}/{UPLOAD_MAX_WORKERS})")
 
         # Index the file
-        metadata = {
+        metadata: Dict[str, Optional[str]] = {
             "description": description,
-            "uploaded_at": datetime.utcnow().isoformat(),
+            "uploaded_at": datetime.now(timezone.utc).isoformat(),
             "original_filename": filename
         }
 
@@ -682,7 +671,7 @@ def _process_file_upload(
                 "doc_id": result["doc_id"],
                 "filename": filename,
                 "file_path": str(file_path),
-                "uploaded_at": datetime.utcnow().isoformat(),
+                "uploaded_at": datetime.now().isoformat(),
                 "source": source or str(file_path)
             })
             save_entity(entity_data)
@@ -702,7 +691,7 @@ def _process_file_upload(
 
         with upload_tasks_lock:
             upload_tasks[task_id].status = TaskStatus.COMPLETED
-            upload_tasks[task_id].updated_at = datetime.utcnow()
+            upload_tasks[task_id].updated_at = datetime.now(timezone.utc)
             upload_tasks[task_id].message = "File uploaded and indexed successfully"
             upload_tasks[task_id].result = upload_result
 
@@ -712,10 +701,9 @@ def _process_file_upload(
         logger.error(f"Error processing file upload for task {task_id}: {e}")
         with upload_tasks_lock:
             upload_tasks[task_id].status = TaskStatus.FAILED
-            upload_tasks[task_id].updated_at = datetime.utcnow()
+            upload_tasks[task_id].updated_at = datetime.now(timezone.utc)
             upload_tasks[task_id].error = str(e)
             upload_tasks[task_id].message = f"Failed to process file: {str(e)}"
-
 
 @app.post("/api/entities/{entity_id}/files", response_model=TaskStatusResponse, tags=["Files"])
 async def upload_file(
@@ -744,57 +732,74 @@ async def upload_file(
 
         # Generate task ID
         task_id = f"upload_{uuid.uuid4().hex[:12]}"
+        
+        if file.filename:
+            # Sanitize filename to prevent path traversal attacks
+            filename = os.path.basename(file.filename)
 
-        # Save uploaded file
-        file_path = UPLOAD_DIR / entity_id / file.filename
-        file_path.parent.mkdir(parents=True, exist_ok=True)
+            # Additional validation: remove any remaining path separators
+            filename = filename.replace("/", "_").replace("\\", "_")
 
-        content = await file.read()
-        with open(file_path, "wb") as f:
-            f.write(content)
+            if not filename or filename.startswith("."):
+                raise HTTPException(status_code=400, detail="Invalid filename")
 
-        # Create task record
-        task = FileUploadTask(
-            task_id=task_id,
-            entity_id=entity_id,
-            filename=file.filename,
-            status=TaskStatus.PENDING,
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
-            message="File uploaded, queued for processing"
-        )
+            # Construct file path
+            file_path: Path = UPLOAD_DIR / entity_id / filename
 
-        with upload_tasks_lock:
-            upload_tasks[task_id] = task
+            # Normalize and verify the path is within the upload directory
+            normalized_path = os.path.normpath(file_path)
+            normalized_upload_dir = os.path.normpath(UPLOAD_DIR / entity_id)
 
-        # Submit to background executor
-        upload_executor.submit(
-            _process_file_upload,
-            task_id,
-            entity_id,
-            file_path,
-            file.filename,
-            description,
-            source
-        )
+            if not normalized_path.startswith(normalized_upload_dir):
+                raise HTTPException(status_code=400, detail="Invalid file path")
 
-        logger.info(f"Created upload task {task_id} for file {file.filename} in entity {entity_id}")
+            file_path = Path(normalized_path)
+            file_path.parent.mkdir(parents=True, exist_ok=True)
 
-        return TaskStatusResponse(
-            task_id=task_id,
-            status=TaskStatus.PENDING,
-            created_at=task.created_at,
-            updated_at=task.updated_at,
-            message=task.message
-        )
+            content = await file.read()
+            with open(file_path, "wb") as f:
+                f.write(content)
+
+            # Create task record
+            task = FileUploadTask(
+                task_id=task_id,
+                entity_id=entity_id,
+                filename=file.filename,
+                status=TaskStatus.PENDING,
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+                message="File uploaded, queued for processing"
+            )
+
+            with upload_tasks_lock:
+                upload_tasks[task_id] = task
+
+            # Submit to background executor
+            upload_executor.submit(
+                _process_file_upload,
+                task_id,
+                entity_id,
+                file_path,
+                file.filename,
+                description,
+                source
+            )
+
+            logger.info(f"Created upload task {task_id} for file {file.filename} in entity {entity_id}")
+
+            return TaskStatusResponse(
+                task_id=task_id,
+                status=TaskStatus.PENDING,
+                created_at=task.created_at,
+                updated_at=task.updated_at,
+                message=task.message
+            )
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error creating upload task: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
-
 @app.get("/api/tasks/{task_id}", response_model=TaskStatusResponse, tags=["Files"])
 async def get_task_status(task_id: str):
     """
@@ -831,7 +836,6 @@ async def get_task_status(task_id: str):
         logger.error(f"Error getting task status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @app.get("/api/entities/{entity_id}/files", response_model=List[DocumentInfo], tags=["Files"])
 async def list_files(entity_id: str):
     """List all files for an entity"""
@@ -857,7 +861,6 @@ async def list_files(entity_id: str):
     except Exception as e:
         logger.error(f"Error listing files: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.delete("/api/entities/{entity_id}/files/{doc_id}", response_model=FileDeleteResponse, tags=["Files"])
 async def delete_file(entity_id: str, doc_id: str):
@@ -888,9 +891,19 @@ async def delete_file(entity_id: str, doc_id: str):
             logger.warning(f"Failed to delete document {doc_id} from entity store")
 
         # Delete physical file if exists
-        file_path = Path(doc_to_delete.get("file_path", ""))
-        if file_path.exists():
-            file_path.unlink()
+        stored_file_path = doc_to_delete.get("file_path", "")
+        if stored_file_path:
+            file_path = Path(stored_file_path)
+
+            # Normalize and verify the path is within the upload directory
+            normalized_path = os.path.normpath(file_path)
+            normalized_upload_dir = os.path.normpath(UPLOAD_DIR)
+
+            # Only delete if path is within upload directory
+            if normalized_path.startswith(normalized_upload_dir) and file_path.exists():
+                file_path.unlink()
+            elif not normalized_path.startswith(normalized_upload_dir):
+                logger.warning(f"Attempted to delete file outside upload directory: {normalized_path}")
 
         logger.info(f"Deleted document {doc_id} from entity {entity_id}")
 
@@ -933,13 +946,13 @@ async def create_chat_session(session: ChatSessionCreate):
         session_count = len([s for s in chat_sessions_db.values() if s["entity_id"] == session.entity_id])
 
         # Create session data
-        session_data = {
+        session_data: Dict[str, Any] = {
             "session_id": session_id,
             "entity_id": session.entity_id,
             "entity_name": entity_data["entity_name"],
             "session_name": session.session_name or f"Chat {session_count + 1}",
-            "created_at": datetime.utcnow().isoformat(),
-            "last_activity": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "last_activity": datetime.now(timezone.utc).isoformat(),
             "messages": [],
             "metadata": session.metadata or {}
         }
@@ -972,7 +985,6 @@ async def create_chat_session(session: ChatSessionCreate):
     except Exception as e:
         logger.error(f"Error creating chat session: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.get("/api/chat/sessions/{session_id}", response_model=ChatSessionResponse, tags=["Chat"])
 async def get_chat_session(session_id: str):
@@ -1010,7 +1022,6 @@ async def get_chat_session(session_id: str):
         logger.error(f"Error getting chat session: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @app.get("/api/entities/{entity_id}/sessions", response_model=List[ChatSessionResponse], tags=["Chat"])
 async def list_entity_sessions(entity_id: str):
     """List all chat sessions for an entity"""
@@ -1019,9 +1030,9 @@ async def list_entity_sessions(entity_id: str):
         if not entity_data:
             raise HTTPException(status_code=404, detail=f"Entity {entity_id} not found")
 
-        sessions = []
+        sessions: List[ChatSessionResponse] = []
         chat_sessions_db = get_chat_sessions_db()
-        for session_id, session_data in chat_sessions_db.items():
+        for _, session_data in chat_sessions_db.items():
             if session_data["entity_id"] == entity_id:
                 sessions.append(ChatSessionResponse(
                     session_id=session_data["session_id"],
@@ -1044,7 +1055,7 @@ async def list_entity_sessions(entity_id: str):
 
 
 @app.delete("/api/chat/sessions/{session_id}", tags=["Chat"])
-async def delete_chat_session(session_id: str):
+async def delete_chat_session(session_id: str) -> Dict[str, Any]:
     """Delete a chat session"""
     try:
         session_data = get_chat_session_from_storage(session_id)
@@ -1080,7 +1091,7 @@ async def get_chat_history(session_id: str):
             raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
 
         # Convert message timestamps
-        messages = []
+        messages: List[ChatMessage] = []
         for msg_dict in session_data["messages"]:
             msg = ChatMessage(
                 role=msg_dict["role"],
@@ -1131,13 +1142,13 @@ async def chat(request: ChatRequest):
             agent = session_agents[request.session_id]
 
             # Add user message to history
-            user_message_dict = {
+            user_message_dict: Dict[str, Any] = {
                 "role": ChatMessageRole.USER,
                 "content": request.message,
-                "timestamp": datetime.utcnow().isoformat()
+                "timestamp": datetime.now(timezone.utc).isoformat()
             }
             session_data["messages"].append(user_message_dict)
-            session_data["last_activity"] = datetime.utcnow().isoformat()
+            session_data["last_activity"] = datetime.now(timezone.utc).isoformat()
 
             # Save immediately to persist user message
             save_chat_session(session_data)
@@ -1161,21 +1172,22 @@ async def chat(request: ChatRequest):
                             ),
                             None
                         ):
-                            if response.content:
-                                full_response += response.content
-                                yield response.content
+                            if response:
+                                if response.content:
+                                    full_response += response.content
+                                    yield response.content
 
-                            if response.end_call or response.content_complete:
-                                # Save assistant message
-                                assistant_message_dict = {
-                                    "role": ChatMessageRole.ASSISTANT,
-                                    "content": full_response,
-                                    "timestamp": datetime.utcnow().isoformat()
-                                }
-                                session_data["messages"].append(assistant_message_dict)
-                                session_data["last_activity"] = datetime.utcnow().isoformat()
-                                save_chat_session(session_data)
-                                break
+                                if response.end_call or response.content_complete:
+                                    # Save assistant message
+                                    assistant_message_dict: Dict[str, Any] = {
+                                        "role": ChatMessageRole.ASSISTANT,
+                                        "content": full_response,
+                                        "timestamp": datetime.now(timezone.utc).isoformat()
+                                    }
+                                    session_data["messages"].append(assistant_message_dict)
+                                    session_data["last_activity"] = datetime.now(timezone.utc).isoformat()
+                                    save_chat_session(session_data)
+                                    break
                     finally:
                         decrement_active_tasks("chat")
                         logger.info(f"Completed chat request (active: {get_active_tasks_count('chat')}/{CHAT_MAX_WORKERS}, total: {get_active_tasks_count()})")
