@@ -1,0 +1,22 @@
+{
+  "doc0": {
+    "_id": "doc0",
+    "index": 0
+  },
+  "doc1": {
+    "_id": "doc1",
+    "index": 1
+  },
+  "doc2": {
+    "_id": "doc2",
+    "index": 2
+  },
+  "doc3": {
+    "_id": "doc3",
+    "index": 3
+  },
+  "doc4": {
+    "_id": "doc4",
+    "index": 4
+  }
+}
