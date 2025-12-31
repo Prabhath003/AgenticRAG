@@ -82,7 +82,7 @@ dependencies:
       - langchain-core==0.3.76
       - langchain-huggingface==0.3.1
       - langchain-text-splitters==0.3.11
-      - langsmith==0.4.31
+      - langsmith==0.5.2
       - limits==5.6.0
       - llama-cloud==0.1.42
       - llama-cloud-services==0.6.69
