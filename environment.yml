@@ -89,7 +89,7 @@ dependencies:
       - llama-index-core==0.14.3
       - llama-index-instrumentation==0.4.1
       - llama-index-workflows==2.6.0
-      - llama-parse==0.6.69
+      - llama-parse==0.6.88
       - markupsafe==3.0.3
       - marshmallow==3.26.1
       - mpmath==1.3.0
