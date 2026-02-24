@@ -2,7 +2,7 @@
 # Copyright (c) 2025 Backend
 # All rights reserved.
 #
-# Developed by: 
+# Developed by:
 # Author: Prabhath Chellingi
 # GitHub: https://github.com/Prabhath003
 # Contact: prabhathchellingi2003@gmail.com

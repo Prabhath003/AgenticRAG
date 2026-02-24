@@ -21,14 +21,20 @@ from enum import Enum
 
 class EntityCreate(BaseModel):
     """Request model for creating an entity"""
-    entity_id: str = Field(..., description="Unique entity identifier", example="company_123")
-    entity_name: str = Field(..., description="Display name for the entity", example="TechCorp Industries")
-    description: Optional[str] = Field(None, description="Optional description", example="AI-powered analytics company")
+
+    entity_id: str = Field(..., description="Unique entity identifier", examples=["company_123"])
+    entity_name: str = Field(
+        ..., description="Display name for the entity", examples=["TechCorp Industries"]
+    )
+    description: Optional[str] = Field(
+        None, description="Optional description", examples=["AI-powered analytics company"]
+    )
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
 
 
 class EntityResponse(BaseModel):
     """Response model for entity operations"""
+
     entity_id: str
     entity_name: str
     description: Optional[str] = None
@@ -41,12 +47,14 @@ class EntityResponse(BaseModel):
 
 class EntityListResponse(BaseModel):
     """Response model for listing entities"""
+
     entities: List[EntityResponse]
     total: int
 
 
 class FileUploadResponse(BaseModel):
     """Response model for file upload"""
+
     success: bool
     doc_id: str
     entity_id: str
@@ -58,6 +66,7 @@ class FileUploadResponse(BaseModel):
 
 class FileDeleteResponse(BaseModel):
     """Response model for file deletion"""
+
     success: bool
     doc_id: str
     entity_id: str
@@ -66,6 +75,7 @@ class FileDeleteResponse(BaseModel):
 
 class DocumentInfo(BaseModel):
     """Document information"""
+
     doc_id: str
     doc_name: str
     file_path: Optional[str] = None
@@ -76,6 +86,7 @@ class DocumentInfo(BaseModel):
 
 class ChatSessionCreate(BaseModel):
     """Request model for creating a chat session"""
+
     entity_id: str = Field(..., description="Entity to chat with")
     session_name: Optional[str] = Field(None, description="Optional session name")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
@@ -83,6 +94,7 @@ class ChatSessionCreate(BaseModel):
 
 class ChatSessionResponse(BaseModel):
     """Response model for chat session"""
+
     session_id: str
     entity_id: str
     entity_name: str
@@ -95,6 +107,7 @@ class ChatSessionResponse(BaseModel):
 
 class ChatMessageRole(str, Enum):
     """Chat message roles"""
+
     USER = "user"
     ASSISTANT = "assistant"
     SYSTEM = "system"
@@ -102,6 +115,7 @@ class ChatMessageRole(str, Enum):
 
 class ChatMessage(BaseModel):
     """Chat message"""
+
     role: ChatMessageRole
     content: str
     timestamp: Optional[datetime] = None
@@ -110,6 +124,7 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     """Request model for chat"""
+
     session_id: str
     message: str
     stream: bool = Field(default=True, description="Whether to stream the response")
@@ -117,17 +132,21 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     """Response model for chat"""
+
     session_id: str
     message: ChatMessage
     sources: Optional[List[Dict[str, Any]]] = None
     node_ids: Optional[List[str]] = Field(None, description="All nodes used as context")
     relationship_ids: Optional[List[str]] = Field(None, description="All navigation relationships")
-    cited_node_ids: Optional[List[str]] = Field(None, description="Nodes actually cited in the answer")
+    cited_node_ids: Optional[List[str]] = Field(
+        None, description="Nodes actually cited in the answer"
+    )
     citations: Optional[List[Dict[str, Any]]] = Field(None, description="Citation details")
 
 
 class SearchRequest(BaseModel):
     """Request model for search"""
+
     entity_id: str
     query: str
     k: int = Field(default=5, ge=1, le=20, description="Number of results")
@@ -136,6 +155,7 @@ class SearchRequest(BaseModel):
 
 class SearchResult(BaseModel):
     """Search result"""
+
     content: str
     doc_id: str
     chunk_order_index: int
@@ -145,6 +165,7 @@ class SearchResult(BaseModel):
 
 class SearchResponse(BaseModel):
     """Response model for search"""
+
     entity_id: str
     query: str
     results: List[SearchResult]
@@ -153,6 +174,7 @@ class SearchResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     """Health check response"""
+
     status: str
     version: str
     entities_loaded: int
@@ -161,6 +183,7 @@ class HealthResponse(BaseModel):
 
 class ErrorResponse(BaseModel):
     """Error response"""
+
     error: str
     detail: Optional[str] = None
     timestamp: datetime = Field(default_factory=datetime.now)
@@ -168,6 +191,7 @@ class ErrorResponse(BaseModel):
 
 class TaskStatus(str, Enum):
     """Task status enum"""
+
     PENDING = "pending"
     PROCESSING = "processing"
     COMPLETED = "completed"
@@ -176,6 +200,7 @@ class TaskStatus(str, Enum):
 
 class FileUploadTask(BaseModel):
     """File upload task status"""
+
     task_id: str
     entity_id: str
     filename: str
@@ -189,6 +214,7 @@ class FileUploadTask(BaseModel):
 
 class TaskStatusResponse(BaseModel):
     """Response model for task status"""
+
     task_id: str
     status: TaskStatus
     created_at: datetime
@@ -200,27 +226,36 @@ class TaskStatusResponse(BaseModel):
 
 class KnowledgeGraphNode(BaseModel):
     """Knowledge graph node representing a chunk"""
+
     id: str = Field(..., description="Node ID in format: {entity_id}_{doc_id}_{chunk_order_index}")
     nodeLabel: str
-    properties: Dict[str, Any] = Field(default_factory=dict, description="Node properties including entity_id, doc_id, chunk_order_index, content, source, and metadata")
+    properties: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Node properties including entity_id, doc_id, chunk_order_index, content, source, and metadata",
+    )
 
 
 class KnowledgeGraphRelationship(BaseModel):
     """Knowledge graph relationship between nodes"""
+
     id: str = Field(..., description="Relationship ID in format: {source_id}:{target_id}")
     source: str = Field(..., description="Source node ID")
     target: str = Field(..., description="Target node ID")
-    label: str = Field(default="sequential", description="Type of relationship (e.g., sequential, reference)")
+    label: str = Field(
+        default="sequential", description="Type of relationship (e.g., sequential, reference)"
+    )
     properties: Optional[Dict[str, Any]] = None
 
 
 class KnowledgeGraphRequest(BaseModel):
     """Request model for knowledge graph"""
+
     entity_ids: List[str] = Field(..., description="List of entity IDs to include in the graph")
 
 
 class KnowledgeGraphResponse(BaseModel):
     """Response model for knowledge graph"""
+
     nodes: List[KnowledgeGraphNode]
     relationships: List[KnowledgeGraphRelationship]
     total_nodes: int
@@ -248,6 +283,7 @@ class KnowledgeGraphResponse(BaseModel):
 
 class ChunkCreate(BaseModel):
     """Request model for creating/ingesting a chunk"""
+
     chunk_id: str = Field(..., description="Unique chunk identifier (managed by client)")
     content: Dict[str, Any] = Field(..., description="Markdown content")
     metadata: Dict[str, Any] = Field(..., description="Chunk metadata")
@@ -255,6 +291,7 @@ class ChunkCreate(BaseModel):
 
 class ChunkIngestResponse(BaseModel):
     """Response model for chunk ingestion"""
+
     success: bool
     chunk_id: str
     entity_id: str
@@ -265,11 +302,13 @@ class ChunkIngestResponse(BaseModel):
 
 class ChunkBatchIngestRequest(BaseModel):
     """Request model for batch chunk ingestion"""
+
     chunks: List[ChunkCreate] = Field(..., description="List of chunks to ingest")
 
 
 class ChunkBatchIngestResponse(BaseModel):
     """Response model for batch chunk ingestion"""
+
     success: bool
     entity_id: str
     doc_id: str

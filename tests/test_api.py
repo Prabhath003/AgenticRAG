@@ -4,16 +4,18 @@
 import requests
 import json
 import time
+import traceback
 from pathlib import Path
+from typing import Dict, Any
 
 BASE_URL = "http://localhost:8002"
 
 
-def print_section(title):
+def print_section(title: str):
     """Print a section header"""
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print(f"  {title}")
-    print("="*60)
+    print("=" * 60)
 
 
 def test_api():
@@ -28,14 +30,11 @@ def test_api():
 
     # Test 2: Create Entity
     print_section("2. Create Entity")
-    entity_data = {
+    entity_data: Dict[str, Any] = {
         "entity_id": "company_techcorp",
         "entity_name": "TechCorp Industries",
         "description": "AI-powered analytics company",
-        "metadata": {
-            "industry": "Technology",
-            "founded": 2020
-        }
+        "metadata": {"industry": "Technology", "founded": 2020},
     }
     response = requests.post(f"{BASE_URL}/api/entities", json=entity_data)
     print(f"Status: {response.status_code}")
@@ -77,9 +76,7 @@ def test_api():
         files = {"file": ("techcorp_q4_report.txt", f, "text/plain")}
         data = {"description": "Q4 2024 Financial Report"}
         response = requests.post(
-            f"{BASE_URL}/api/entities/company_techcorp/files",
-            files=files,
-            data=data
+            f"{BASE_URL}/api/entities/company_techcorp/files", files=files, data=data
         )
 
     print(f"Status: {response.status_code}")
@@ -99,26 +96,26 @@ def test_api():
 
     # Test 6: Search
     print_section("6. Search Documents")
-    search_data = {
+    search_data: Dict[str, Any] = {
         "entity_id": "company_techcorp",
         "query": "Q4 revenue financial performance",
-        "k": 3
+        "k": 3,
     }
     response = requests.post(f"{BASE_URL}/api/search", json=search_data)
     print(f"Status: {response.status_code}")
     search_results = response.json()
     print(f"Found {search_results['total']} results")
-    for i, result in enumerate(search_results['results'], 1):
+    for i, result in enumerate(search_results["results"], 1):
         print(f"\nResult {i}:")
         print(f"  Doc ID: {result['doc_id']}")
         print(f"  Content: {result['content'][:200]}...")
 
     # Test 7: Create Chat Session
     print_section("7. Create Chat Session")
-    session_data = {
+    session_data: Dict[str, Any] = {
         "entity_id": "company_techcorp",
         "session_name": "Financial Analysis Session",
-        "metadata": {"purpose": "Q4 analysis"}
+        "metadata": {"purpose": "Q4 analysis"},
     }
     response = requests.post(f"{BASE_URL}/api/chat/sessions", json=session_data)
     print(f"Status: {response.status_code}")
@@ -129,10 +126,10 @@ def test_api():
 
     # Test 8: Send Chat Message (Non-Streaming)
     print_section("8. Send Chat Message")
-    chat_data = {
+    chat_data: Dict[str, Any] = {
         "session_id": session_id,
         "message": "What was the Q4 revenue and how did it grow?",
-        "stream": False
+        "stream": False,
     }
     print(f"Question: {chat_data['message']}")
     print("\nResponse: ", end="", flush=True)
@@ -173,7 +170,7 @@ def test_api():
     print(f"  - Delete file: DELETE {BASE_URL}/api/entities/company_techcorp/files/{doc_id}")
     print(f"  - Delete entity: DELETE {BASE_URL}/api/entities/company_techcorp")
 
-    '''
+    """
     # Uncomment to actually delete
 
     # Delete Session
@@ -193,7 +190,7 @@ def test_api():
     response = requests.delete(f"{BASE_URL}/api/entities/company_techcorp")
     print(f"Status: {response.status_code}")
     print(f"Response: {json.dumps(response.json(), indent=2)}")
-    '''
+    """
 
     print_section("All Tests Completed Successfully! ✓")
 
@@ -207,5 +204,5 @@ if __name__ == "__main__":
         print("  cd api && python main.py")
     except Exception as e:
         print(f"\n✗ Test failed: {e}")
-        import traceback
+
         traceback.print_exc()

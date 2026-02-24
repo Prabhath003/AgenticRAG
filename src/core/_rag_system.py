@@ -2,7 +2,7 @@
 # Copyright (c) 2025 Backend
 # All rights reserved.
 #
-# Developed by: 
+# Developed by:
 # Author: Prabhath Chellingi
 # GitHub: https://github.com/Prabhath003
 # Contact: prabhathchellingi2003@gmail.com
@@ -30,39 +30,41 @@ from ..infrastructure.clients import chunk_file
 from ..config import Config
 from ..log_creator import get_file_logger
 from ..infrastructure.storage import get_storage_session
-from .entity_scoped_rag import get_entity_rag_manager, entity_rag_context
+from ._entity_scoped_rag import get_entity_rag_manager, entity_rag_context
 from ..infrastructure.metrics import Service
 
 logger = get_file_logger()
+
 
 class RAGSystemPool:
     """
     Singleton RAG system pool with thread safety
     """
+
     _instance = None
     _lock = threading.Lock()
-    
+
     def __new__(cls):
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
                     cls._instance = super().__new__(cls)
         return cls._instance
-    
+
     def __init__(self):
-        if hasattr(self, '_initialized'):
+        if hasattr(self, "_initialized"):
             return
-        
+
         self._initialized = True
-        self._rag_system: Optional['RAGSystem'] = None
+        self._rag_system: Optional["RAGSystem"] = None
         self._operation_lock = threading.RLock()  # For thread-safe operations
         self._last_used = time.time()
         self._initialization_failed = False
-        
+
         # Initialize RAG system in a separate thread to avoid blocking
         self._init_thread = threading.Thread(target=self._initialize_rag_system_async, daemon=True)
         self._init_thread.start()
-        
+
     def _initialize_rag_system_async(self):
         """Initialize RAG system asynchronously"""
         try:
@@ -77,16 +79,16 @@ class RAGSystemPool:
             logger.error(f"Failed to initialize RAG system: {e}")
             self._rag_system = None
             self._initialization_failed = True
-    
-    def get_rag_system(self) -> Optional['RAGSystem']:
+
+    def get_rag_system(self) -> Optional["RAGSystem"]:
         """Get RAG system instance, with lazy initialization if needed"""
         self._last_used = time.time()
-        
+
         # If initialization is still in progress, wait for it
-        if hasattr(self, '_init_thread') and self._init_thread.is_alive():
+        if hasattr(self, "_init_thread") and self._init_thread.is_alive():
             logger.info("Waiting for RAG system initialization to complete...")
             self._init_thread.join(timeout=30)  # Wait up to 30 seconds
-            
+
         # If initialization failed and we haven't tried again recently, retry
         if self._rag_system is None and not self._initialization_failed:
             try:
@@ -96,19 +98,19 @@ class RAGSystemPool:
             except Exception as e:
                 logger.error(f"Failed to initialize RAG system on demand: {e}")
                 self._initialization_failed = True
-                
+
         return self._rag_system
-    
+
     def is_available(self) -> bool:
         """Check if RAG system is available"""
         return self._rag_system is not None
-    
+
     @contextmanager
     def get_rag_context(self):
         """Context manager for RAG operations with thread safety"""
         if not self._rag_system:
             raise RuntimeError("RAG system not available")
-        
+
         with self._operation_lock:
             try:
                 yield self._rag_system
@@ -117,6 +119,7 @@ class RAGSystemPool:
                 raise
             finally:
                 self._last_used = time.time()
+
 
 class RAGSystem:
     vector_store: Optional[FAISS] = None
@@ -129,9 +132,7 @@ class RAGSystem:
         logger.debug("Document loaders initialized")
 
         # Initialize embeddings
-        self.embeddings = HuggingFaceEmbeddings(
-            model_name=Config.EMBEDDINGS_MODEL
-        )
+        self.embeddings = HuggingFaceEmbeddings(model_name=Config.EMBEDDINGS_MODEL)
         logger.info(f"Loaded embeddings model: {Config.EMBEDDINGS_MODEL}")
 
         # Set vector store path
@@ -142,99 +143,100 @@ class RAGSystem:
 
         # Index mappings for efficient filtering
         self.entity_to_chunks: Dict[str, set] = {}  # entity_id -> set of chunk indices
-        self.doc_to_chunks: Dict[str, set] = {}     # doc_id -> set of chunk indices
+        self.doc_to_chunks: Dict[str, set] = {}  # doc_id -> set of chunk indices
         self.chunk_metadata: Dict[int, Dict[str, Any]] = {}  # chunk index -> metadata
-        
-        try:            
+
+        try:
             # Load existing vector store (this should be done last)
             self.load_vector_store(self.vector_store_path)
-            
+
             self._load_existing_document_hashes()
-            
+
             logger.info("RAG System initialization completed successfully")
-            
+
         except Exception as e:
             logger.error(f"Failed to initialize RAG System: {e}")
             # Clean up any partially initialized state
             self._cleanup_partial_init()
             raise
-        
+
     def cleanup_duplicate_documents(self) -> Dict[str, int]:
         """Find and clean up duplicate documents"""
         logger.info("Starting duplicate document cleanup")
-        
-        stats: Dict[str, int|bool] = {
-            'duplicates_found': 0,
-            'duplicates_removed': 0,
-            'vector_store_rebuilt': False
+
+        stats: Dict[str, int | bool] = {
+            "duplicates_found": 0,
+            "duplicates_removed": 0,
+            "vector_store_rebuilt": False,
         }
-        
+
         try:
             with get_storage_session() as db:
                 # Find documents with same content hash
                 pipeline: List[Dict[str, Dict[str, Any]]] = [
                     {"$match": {"content_hash": {"$exists": True}}},
-                    {"$group": {
-                        "_id": "$content_hash",
-                        "docs": {"$push": {"doc_id": "$doc_id", "entity_ids": "$entity_ids"}},
-                        "count": {"$sum": 1}
-                    }},
-                    {"$match": {"count": {"$gt": 1}}}
+                    {
+                        "$group": {
+                            "_id": "$content_hash",
+                            "docs": {"$push": {"doc_id": "$doc_id", "entity_ids": "$entity_ids"}},
+                            "count": {"$sum": 1},
+                        }
+                    },
+                    {"$match": {"count": {"$gt": 1}}},
                 ]
 
                 duplicates = list(db[Config.DOC_ID_NAME_MAPPING_COLLECTION].aggregate(pipeline))
-                stats['duplicates_found'] = len(duplicates)
-                
+                stats["duplicates_found"] = len(duplicates)
+
                 for dup_group in duplicates:
-                    docs = dup_group['docs']
+                    docs = dup_group["docs"]
                     # Keep the first document, merge others into it
                     primary_doc = docs[0]
-                    
-                    all_entity_ids = set(primary_doc.get('entity_ids', []))
-                    
+
+                    all_entity_ids = set(primary_doc.get("entity_ids", []))
+
                     # Collect all entity IDs from duplicates
                     for doc in docs[1:]:
-                        all_entity_ids.update(doc.get('entity_ids', []))
-                        
+                        all_entity_ids.update(doc.get("entity_ids", []))
+
                         # Delete duplicate document
-                        self.delete_document(doc['doc_id'])
-                        stats['duplicates_removed'] += 1
-                    
+                        self.delete_document(doc["doc_id"])
+                        stats["duplicates_removed"] += 1
+
                     # Update primary document with all entity IDs
                     db[Config.DOC_ID_NAME_MAPPING_COLLECTION].update_one(
-                        {"doc_id": primary_doc['doc_id']},
-                        {"$set": {"entity_ids": list(all_entity_ids)}}
+                        {"doc_id": primary_doc["doc_id"]},
+                        {"$set": {"entity_ids": list(all_entity_ids)}},
                     )
-                
-                if stats['duplicates_removed'] > 0:
+
+                if stats["duplicates_removed"] > 0:
                     # Rebuild vector store
                     self._rebuild_vector_store_without_document(None)  # Full rebuild
-                    stats['vector_store_rebuilt'] = True
-                    
+                    stats["vector_store_rebuilt"] = True
+
             logger.info(f"Duplicate cleanup completed: {stats}")
             return stats
-            
+
         except Exception as e:
             logger.error(f"Failed to cleanup duplicates: {e}")
             return stats
-        
+
     def _calculate_file_hash(self, file_path: str) -> Optional[str]:
         """Calculate SHA-256 hash of fie content"""
         try:
-            with open(file_path, 'rb') as f:
+            with open(file_path, "rb") as f:
                 content = f.read()
                 return hashlib.sha256(content).hexdigest()
         except Exception as e:
             logger.error(f"Failed to calculate hash for {file_path}: {e}")
             return None
-        
+
     def _load_existing_document_hashes(self):
         """Load existing document hashed from storage"""
         try:
             with get_storage_session() as db:
                 existing_docs = db[Config.DOC_ID_NAME_MAPPING_COLLECTION].find(
-                    {"content_hash": {"$exists": True}},
-                    {"doc_id": 1, "content_hash": 1}
+                    {"content_hash": {"$exists": True}}, {"doc_id": 1, "content_hash": 1}
                 )
 
                 for doc in existing_docs:
@@ -247,49 +249,51 @@ class RAGSystem:
 
         except Exception as e:
             logger.error(f"Failed to load existing document hashes: {e}")
-            
+
     def _check_duplicate_by_hash(self, file_path: str) -> Optional[str]:
         """Check if document is a duplicate based on content hash"""
         content_hash = self._calculate_file_hash(file_path)
         if not content_hash:
             return None
-        
+
         return self.document_hashes.get(content_hash)
-        
+
     def _cleanup_partial_init(self):
         """Clean up partially initialized state"""
         logger.debug("Cleaning up partial initialization")
         self.embeddings = None
-        
-    def index_single_document(self, file_path: str, entity_id: Optional[str], metadata: Optional[Dict[str, Any]]=None) -> Optional[Dict[str, Any]]:
+
+    def index_single_document(
+        self, file_path: str, entity_id: Optional[str], metadata: Optional[Dict[str, Any]] = None
+    ) -> Optional[Dict[str, Any]]:
         """
         Index a single document and return document information
-        
+
         Args:
             file_path: Path to the document file
             entity_id: entity this document belongs to
             metadat: Additional metadata to attach to the document
-        
+
         Returns:
             Dictionary with doc_id and other document info, or None if failed
         """
         logger.info(f"Indexing single document: {file_path} for entity: {entity_id}")
-        
+
         if not os.path.exists(file_path):
             logger.error(f"File does not exist: {file_path}")
             return None
-        
+
         try:
             # Check for duplicate by content hash
             existing_doc_id = self._check_duplicate_by_hash(file_path)
-            
+
             if existing_doc_id:
                 logger.info(f"Document with same content already exists: {existing_doc_id}")
-                
+
                 if entity_id:
                     # Update entity association for existing documnet
                     self._add_entity_to_existing_document(existing_doc_id, entity_id)
-                
+
                 # Get existing document info
                 with get_storage_session() as db:
                     existing_doc = db[Config.DOC_ID_NAME_MAPPING_COLLECTION].find_one(
@@ -299,115 +303,109 @@ class RAGSystem:
                 if existing_doc:
                     return {
                         "doc_id": existing_doc_id,
-                        'doc_name': existing_doc.get('doc_name', ''),
-                        'file_path': existing_doc.get('doc_path', ''),
-                        'entity_id': entity_id,
-                        'is_duplicate': True,
-                        'chunks_count': 0
+                        "doc_name": existing_doc.get("doc_name", ""),
+                        "file_path": existing_doc.get("doc_path", ""),
+                        "entity_id": entity_id,
+                        "is_duplicate": True,
+                        "chunks_count": 0,
                     }
-                    
+
             # Proceed with normal indexing for new documents
             content_hash = self._calculate_file_hash(file_path)
-                         
+
             # Load and process the document
-            split_docs =  self._load_document(file_path, entity_id, metadata)
-            
+            split_docs = self._load_document(file_path, entity_id, metadata)
+
             if not split_docs:
                 logger.warning(f"No documents loaded from: {file_path}")
                 return None
-            
-            doc_id: str = str(split_docs[0]['metadata']['doc_id'])
-            doc_name: str = str(split_docs[0]['metadata']['doc_name'])
-            
+
+            doc_id: str = str(split_docs[0]["metadata"]["doc_id"])
+            doc_name: str = str(split_docs[0]["metadata"]["doc_name"])
+
             with get_storage_session() as db:
                 for chunk in split_docs:
-                    chunk_id = f"chunk_{chunk['metadata']['doc_id']}_{chunk['chunk']['chunk_order_index']}"
+                    chunk_id = (
+                        f"chunk_{chunk['metadata']['doc_id']}_{chunk['chunk']['chunk_order_index']}"
+                    )
                     update_doc = {key: value for key, value in chunk.items() if key != "_id"}
 
                     db[Config.CHUNKS_COLLECTION].update_one(
-                        {"_id": chunk_id},
-                        {"$set": update_doc},
-                        upsert=True
+                        {"_id": chunk_id}, {"$set": update_doc}, upsert=True
                     )
-            
+
             # Add to vector store
             self._create_or_update_vector_store(split_docs)
-            
+
             # Update document mappings
             self._update_docid_name_mapping(doc_id, file_path, entity_id, content_hash, metadata)
-            
+
             if content_hash:
                 self.document_hashes[content_hash] = doc_id
                 self.doc_id_to_hash[doc_id] = content_hash
-                
+
             logger.info(f"Successfully indexed document: {doc_name} with doc_id: {doc_id}")
-            
+
             return {
-                'doc_id': doc_id,
-                'doc_name': doc_name, 
-                'file_path': file_path,
-                'entity_id': entity_id,
-                'chunks_count': len(split_docs),
-                'is_duplicate': False
+                "doc_id": doc_id,
+                "doc_name": doc_name,
+                "file_path": file_path,
+                "entity_id": entity_id,
+                "chunks_count": len(split_docs),
+                "is_duplicate": False,
             }
-            
+
         except Exception as e:
             logger.error(f"Failed to index document {file_path}: {e}", exc_info=True)
             return None
-        
+
         finally:
             self.save_vector_store()
-        
+
     def _add_entity_to_existing_document(self, doc_id: str, entity_id: str):
         """Add entity association to an existing document"""
         try:
             with get_storage_session() as db:
                 # Update document mapping
                 db[Config.DOC_ID_NAME_MAPPING_COLLECTION].update_one(
-                    {'doc_id': doc_id},
-                    {"$addToSet": {"entity_ids": entity_id}}
+                    {"doc_id": doc_id}, {"$addToSet": {"entity_ids": entity_id}}
                 )
                 logger.debug(f"Added entity {entity_id} to existing document {doc_id}")
 
         except Exception as e:
             logger.error(f"Failed to add entity to existing document: {e}")
-    
-    def update_entity_with_document(self, entity_id: str, doc_id: str, doc_name: str, description: str = "Related document"):
+
+    def update_entity_with_document(
+        self, entity_id: str, doc_id: str, doc_name: str, description: str = "Related document"
+    ):
         """Update entity document with reference to indexed document"""
         logger.debug(f"Updating entity {entity_id} with document {doc_id}")
-        
+
         try:
             doc_reference: Dict[str, Any] = {
                 "doc_id": doc_id,
                 "filename": doc_name,
                 "description": description,
-                "indexed_at": datetime.now(timezone.utc)
+                "indexed_at": datetime.now(timezone.utc),
             }
             entity_type = entity_id.split("_")[0]
             with get_storage_session() as db:
                 result = db[entity_type].update_one(
-                    {"_id": entity_id},
-                    {
-                        "$set": {
-                            f"related_doc_ids.{doc_id}": doc_reference
-                        }
-                    }
+                    {"_id": entity_id}, {"$set": {f"related_doc_ids.{doc_id}": doc_reference}}
                 )
-                logger.debug(f"Entity update result - matched: {result.matched_count}, modified: {result.modified_count}")
-                
+                logger.debug(
+                    f"Entity update result - matched: {result.matched_count}, modified: {result.modified_count}"
+                )
+
                 if result.modified_count:
                     entity_mapping_id = f"{entity_id}_{doc_id}"
-                    
+
                     # Check if the entity mapping already exists
                     existing_mapping = db["entity_mappings"].find_one({"_id": entity_mapping_id})
-                    
+
                     if existing_mapping:
                         # Document exists, just add to relations
-                        update_data = {
-                            "$addToSet": {
-                                "relations": ["document", "more details"]
-                            }
-                        }
+                        update_data = {"$addToSet": {"relations": ["document", "more details"]}}
                     else:
                         # Document doesn't exist, create it with initial relations
                         update_data: Dict[str, Dict[str, Any]] = {
@@ -415,55 +413,55 @@ class RAGSystem:
                                 "_id": entity_mapping_id,
                                 "source_id": entity_id,
                                 "target_id": doc_id,
-                                "relations": [["document", "more details"]]  
+                                "relations": [["document", "more details"]],
                             }
                         }
-                    
+
                     result = db["entity_mappings"].update_one(
-                        {"_id": entity_mapping_id},
-                        update_data,
-                        upsert=True
+                        {"_id": entity_mapping_id}, update_data, upsert=True
                     )
-                    
-                    logger.debug(f"Entity mapping update result - matched: {result.matched_count}, modified: {result.modified_count}")
+
+                    logger.debug(
+                        f"Entity mapping update result - matched: {result.matched_count}, modified: {result.modified_count}"
+                    )
 
         except Exception as e:
             logger.error(f"Failed to update entity with document reference: {e}")
-        
+
     def load_and_process_documents(self, documents_dir: str):
         """Load and process all entity documents (legacy method for compatibility)"""
         logger.info(f"Starting document processing from directory: {documents_dir}")
-        
+
         docs_dir = os.path.join(documents_dir, "docs")
         if not os.path.exists(docs_dir):
             logger.error(f"Documents directory does not exist: {documents_dir}")
             return
-        
+
         try:
             for filename in os.listdir(docs_dir):
                 file_path = os.path.join(docs_dir, filename)
 
                 if not os.path.isfile(file_path):
                     continue
-                
+
                 self.index_single_document(file_path, None, None)
-                
+
         except Exception as e:
             logger.error(f"Failed to load documents from {documents_dir}: {e}")
             return
-    
+
     def delete_document(self, doc_id: str) -> bool:
         """
         Delete a document from the system including vector store
-        
+
         Args:
             doc_id: Document ID to delete
-            
+
         Returns:
             bool: True if document was deleted successfully
         """
         logger.info(f"Deleting document: {doc_id}")
-        
+
         try:
             # Clean up hash tracking
             if doc_id in self.doc_id_to_hash:
@@ -471,35 +469,31 @@ class RAGSystem:
                 del self.doc_id_to_hash[doc_id]
                 if content_hash in self.document_hashes:
                     del self.document_hashes[content_hash]
-            
+
             # Get document info from storage
             with get_storage_session() as db:
 
-                relation_docs = list(db[Config.ENTITY_MAPPINGS_COLLECTION].find({
-                    "$or": [
-                        {"target_id": doc_id},
-                        {"source_id": doc_id}
-                    ]
-                }))
-                
-                if relation_docs:
-                    raise RuntimeError("Cannot delete a document when attached to entities, detach the document before")
-                
-                
-                doc_info = db[Config.DOC_ID_NAME_MAPPING_COLLECTION].find_one(
-                    {"doc_id": doc_id}
+                relation_docs = list(
+                    db[Config.ENTITY_MAPPINGS_COLLECTION].find(
+                        {"$or": [{"target_id": doc_id}, {"source_id": doc_id}]}
+                    )
                 )
-                
+
+                if relation_docs:
+                    raise RuntimeError(
+                        "Cannot delete a document when attached to entities, detach the document before"
+                    )
+
+                doc_info = db[Config.DOC_ID_NAME_MAPPING_COLLECTION].find_one({"doc_id": doc_id})
+
                 if not doc_info:
                     logger.warning(f"Document not found in database: {doc_id}")
                     return False
-                
+
                 # Remove from document mappings
-                db[Config.DOC_ID_NAME_MAPPING_COLLECTION].delete_one(
-                    {"doc_id": doc_id}
-                )
+                db[Config.DOC_ID_NAME_MAPPING_COLLECTION].delete_one({"doc_id": doc_id})
                 logger.debug(f"Removed document from mappings: {doc_id}")
-                
+
                 # Remove from entities that reference this document
                 # TODO: Find all the entities connected to this document and delete them we can find that in entity_mappings collection
                 # relation_docs = list(db[Config.ENTITY_MAPPINGS_COLLECTION].find({
@@ -508,7 +502,7 @@ class RAGSystem:
                 #         {"source_id": doc_id}
                 #     ]
                 # }))
-                
+
                 # if relation_docs
                 # for relation_doc in relation_docs:
                 #     if relation_doc["target_id"] == doc_id and relation_doc["source_id"] == doc_id:
@@ -524,74 +518,73 @@ class RAGSystem:
                 #         }
                 #     )
                 #     logger.debug(f"Updated {entity_update_result.modified_count} entities to remove document reference in {entity_type}")
-                
+
                 # # Remove entity mappings
                 # entity_delete_result = db["entity_mappings"].delete_many(
                 #     {"target": doc_id}
                 # )
                 # logger.debug(f"Removed {entity_delete_result.deleted_count} entity mappings")
-            
+
             # Remove from vector store (this requires rebuilding)
             if self.vector_store:
                 self._rebuild_vector_store_without_document(doc_id)
-            
+
             logger.info(f"Successfully deleted document: {doc_id}")
             return True
-            
+
         except Exception as e:
             logger.error(f"Failed to delete document {doc_id}: {e}")
             return False
-        
+
     def _rebuild_vector_store_without_document(self, doc_id_to_remove: Optional[str]):
         """
         Rebuild vector store excluding a specific document
         This is expensive but necessary for FAISS
         """
         logger.info(f"Rebuilding vector store without document: {doc_id_to_remove}")
-        
+
         try:
             # Get all remaining documents from storage
             with get_storage_session() as db:
-                remaining_docs = list(db[Config.DOC_ID_NAME_MAPPING_COLLECTION].find(
-                    {"doc_id": {"$ne": doc_id_to_remove}}
-                ))
-            
+                remaining_docs = list(
+                    db[Config.DOC_ID_NAME_MAPPING_COLLECTION].find(
+                        {"doc_id": {"$ne": doc_id_to_remove}}
+                    )
+                )
+
             if not remaining_docs:
                 logger.info("No documents remaining, clearing vector store")
                 return
-            
+
             # Reload and reprocess all remaining documents
             all_documents: List[Dict[str, Dict[str, Any]]] = []
-            
+
             for doc_info in remaining_docs:
                 doc_path = doc_info.get("doc_path")
                 entity_ids = doc_info.get("entity_ids", [])
-                
+
                 if doc_path and os.path.exists(doc_path):
                     try:
                         # Use first entity_id or None
                         entity_id = entity_ids[0] if entity_ids else None
                         split_docs = self._load_document(doc_path, entity_id)
-                        
+
                         if split_docs:
                             all_documents.extend(split_docs)
                             logger.debug(f"Reloaded document: {doc_path}")
                     except Exception as e:
                         logger.error(f"Failed to reload document {doc_path}: {e}")
-            
+
             # Rebuild vector store
             if all_documents:
                 if self.embeddings:
                     self.vector_store = FAISS.from_documents(
-                                            [
-                                                Document(
-                                                    page_content=doc['chunk']['content'],
-                                                    metadata=doc
-                                                )
-                                                for doc in all_documents
-                                            ],
-                                            self.embeddings
-                                        )
+                        [
+                            Document(page_content=doc["chunk"]["content"], metadata=doc)
+                            for doc in all_documents
+                        ],
+                        self.embeddings,
+                    )
 
                 # Rebuild indices for efficient filtering
                 self._update_chunk_indices(all_documents, 0)
@@ -606,15 +599,17 @@ class RAGSystem:
                 self.entity_to_chunks.clear()
                 self.doc_to_chunks.clear()
                 self.chunk_metadata.clear()
-                
+
         except Exception as e:
             logger.error(f"Failed to rebuild vector store: {e}")
             raise
-    
-    def _load_document(self, file_path: str, entity_id: Optional[str], metadata: Optional[Dict[str, Any]]=None) -> List[Dict[str, Dict[str, Any]]]:
+
+    def _load_document(
+        self, file_path: str, entity_id: Optional[str], metadata: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Dict[str, Any]]]:
         """Load and process a single document file"""
         logger.debug(f"Loading document from: {file_path}")
-        
+
         try:
             # Get file extension
             file_ext = Path(file_path).suffix.lower()
@@ -622,18 +617,18 @@ class RAGSystem:
             # Use file processing API to chunk the file
             chunk_result = chunk_file(file_path, source=file_path)
 
-            if not chunk_result.get('success', False):
+            if not chunk_result.get("success", False):
                 logger.error(f"Failed to chunk file: {file_path}")
                 return []
 
-            chunks = chunk_result.get('chunks', [])
+            chunks = chunk_result.get("chunks", [])
 
             logger.debug(f"Loaded {len(chunks)} raw chunks from: {file_path}")
-            
+
             if not chunks:
                 logger.warning(f"No content loaded from: {file_path}")
                 return []
-            
+
             # Generate unique document ID
             doc_id = f"doc_{str(uuid4())}"
             doc_name = os.path.basename(file_path)
@@ -646,61 +641,67 @@ class RAGSystem:
                 "doc_name": doc_name,
                 "source": file_path,
                 "file_type": file_ext,
-                "indexed_at": datetime.now(timezone.utc)
+                "indexed_at": datetime.now(timezone.utc),
             }
-            
+
             if metadata:
                 doc_metadata.update(metadata)
-                
+
             # Add metadata to all document chunks
             for doc in chunks:
-                if 'metadata' in doc:
-                    doc['metadata'].update(doc_metadata)
+                if "metadata" in doc:
+                    doc["metadata"].update(doc_metadata)
                 else:
-                    doc['metadata'] = doc_metadata.copy()
-                
+                    doc["metadata"] = doc_metadata.copy()
+
             return chunks
-        
+
         except Exception as e:
             logger.error(f"Error loading document {file_path}: {e}")
             return []
-        
-    def _update_docid_name_mapping(self, doc_id: str, file_path: str, entity_id: Optional[str],
-                                 content_hash: Optional[str], metadata: Optional[Dict[str, Any]] = None):
+
+    def _update_docid_name_mapping(
+        self,
+        doc_id: str,
+        file_path: str,
+        entity_id: Optional[str],
+        content_hash: Optional[str],
+        metadata: Optional[Dict[str, Any]] = None,
+    ):
         """Update document ID to name mapping with hash"""
         logger.debug(f"Updating doc-id mapping: doc_id={doc_id}, content_hash={content_hash}")
-        
+
         try:
             mapping_data: Dict[str, Any] = {
                 "doc_path": file_path,
                 "doc_name": os.path.basename(file_path),
                 "file_size": os.path.getsize(file_path) if os.path.exists(file_path) else 0,
-                "indexed_at": datetime.now(timezone.utc)
+                "indexed_at": datetime.now(timezone.utc),
             }
-            
+
             if content_hash:
                 mapping_data["content_hash"] = content_hash
-            
+
             if metadata:
                 mapping_data["metadata"] = metadata
-            
+
             update_data: Dict[str, Dict[str, Any]] = {
                 "$set": mapping_data,
-                "$setOnInsert": {"doc_id": doc_id}
+                "$setOnInsert": {"doc_id": doc_id},
             }
             if entity_id:
                 update_data["$addToSet"] = {"entity_ids": entity_id}
 
             with get_storage_session() as db:
                 result = db[Config.DOC_ID_NAME_MAPPING_COLLECTION].update_one(
-                    {"doc_id": doc_id},
-                    update_data,
-                    upsert=True
+                    {"doc_id": doc_id}, update_data, upsert=True
                 )
-                logger.debug(f"Document mapping update result - matched: {result.matched_count}, modified: {result.modified_count}")
+                logger.debug(
+                    f"Document mapping update result - matched: {result.matched_count}, modified: {result.modified_count}"
+                )
         except Exception as e:
             logger.error(f"Failed to update doc-id mapping: {e}")
-    
+
     def _create_or_update_vector_store(self, documents: List[Dict[str, Dict[str, Any]]]):
         """Create or update the vector store with new documents"""
         logger.debug(f"Creating/updating vector store with {len(documents)} documents")
@@ -708,28 +709,24 @@ class RAGSystem:
         try:
             if self.vector_store:
                 start_idx = len(self.chunk_metadata)
-                self.vector_store.add_documents([
-                    Document(
-                        page_content=doc['chunk']['content'],
-                        metadata=doc
-                    )
-                    for doc in documents
-                ])
+                self.vector_store.add_documents(
+                    [
+                        Document(page_content=doc["chunk"]["content"], metadata=doc)
+                        for doc in documents
+                    ]
+                )
                 # Update indices for new documents
                 self._update_chunk_indices(documents, start_idx)
                 logger.info(f"Added {len(documents)} documents to existing vector store")
             else:
                 if self.embeddings:
                     self.vector_store = FAISS.from_documents(
-                                            [
-                                                Document(
-                                                    page_content=doc['chunk']['content'],
-                                                    metadata=doc
-                                                )
-                                                for doc in documents
-                                            ],
-                                            self.embeddings
-                                        )
+                        [
+                            Document(page_content=doc["chunk"]["content"], metadata=doc)
+                            for doc in documents
+                        ],
+                        self.embeddings,
+                    )
                 # Build indices for all documents
                 self._update_chunk_indices(documents, 0)
                 logger.info(f"Created new vector store with {len(documents)} documents")
@@ -743,20 +740,20 @@ class RAGSystem:
 
         for i, doc in enumerate(documents):
             chunk_idx = start_idx + i
-            metadata = doc['metadata']
+            metadata = doc["metadata"]
 
             # Store chunk metadata
             self.chunk_metadata[chunk_idx] = metadata
 
             # Update doc_id mapping
-            doc_id = metadata.get('doc_id')
+            doc_id = metadata.get("doc_id")
             if doc_id:
                 if doc_id not in self.doc_to_chunks:
                     self.doc_to_chunks[doc_id] = set()
                 self.doc_to_chunks[doc_id].add(chunk_idx)
 
             # Update entity_id mappings
-            entity_ids = metadata.get('entity_ids', [])
+            entity_ids = metadata.get("entity_ids", [])
             for entity_id in entity_ids:
                 if entity_id:
                     if entity_id not in self.entity_to_chunks:
@@ -787,29 +784,29 @@ class RAGSystem:
                 docstore_id = index_to_docstore_id[i]
                 doc = docstore.search(docstore_id)
 
-                if doc and hasattr(doc, 'metadata'):
+                if doc and hasattr(doc, "metadata"):
                     doc_metadata = doc.metadata
                     self.chunk_metadata[i] = doc_metadata
 
                     # The metadata might be nested - check both structures
                     # Case 1: Direct metadata structure
-                    if 'entity_ids' in doc_metadata:
+                    if "entity_ids" in doc_metadata:
                         working_metadata = doc_metadata
                     # Case 2: Nested metadata structure (metadata.metadata)
-                    elif 'metadata' in doc_metadata and isinstance(doc_metadata['metadata'], dict):
-                        working_metadata = doc_metadata['metadata']
+                    elif "metadata" in doc_metadata and isinstance(doc_metadata["metadata"], dict):
+                        working_metadata = doc_metadata["metadata"]
                     else:
                         working_metadata = doc_metadata
 
                     # Update doc_id mapping
-                    doc_id = working_metadata.get('doc_id')
+                    doc_id = working_metadata.get("doc_id")
                     if doc_id:
                         if doc_id not in self.doc_to_chunks:
                             self.doc_to_chunks[doc_id] = set()
                         self.doc_to_chunks[doc_id].add(i)
 
                     # Update entity_id mappings
-                    entity_ids = working_metadata.get('entity_ids', [])
+                    entity_ids = working_metadata.get("entity_ids", [])
                     if entity_ids and isinstance(entity_ids, list):
                         for entity_id in entity_ids:
                             if entity_id:
@@ -843,8 +840,12 @@ class RAGSystem:
                 logger.warning(f"Target entity '{target_entity_id}' NOT FOUND in mapping")
 
                 # Check if we can find similar entity IDs
-                similar_entities = [eid for eid in self.entity_to_chunks.keys()
-                                  if target_entity_id.lower() in eid.lower() or eid.lower() in target_entity_id.lower()]
+                similar_entities = [
+                    eid
+                    for eid in self.entity_to_chunks.keys()
+                    if target_entity_id.lower() in eid.lower()
+                    or eid.lower() in target_entity_id.lower()
+                ]
                 if similar_entities:
                     logger.info(f"Similar entities found: {similar_entities[:5]}")
 
@@ -867,18 +868,18 @@ class RAGSystem:
                 chunks = list(db[Config.CHUNKS_COLLECTION].find({}))
 
                 for i, chunk in enumerate(chunks):
-                    metadata = chunk.get('metadata', {})
+                    metadata = chunk.get("metadata", {})
                     self.chunk_metadata[i] = metadata
 
                     # Update doc_id mapping
-                    doc_id = metadata.get('doc_id')
+                    doc_id = metadata.get("doc_id")
                     if doc_id:
                         if doc_id not in self.doc_to_chunks:
                             self.doc_to_chunks[doc_id] = set()
                         self.doc_to_chunks[doc_id].add(i)
 
                     # Update entity_id mappings
-                    entity_ids = metadata.get('entity_ids', [])
+                    entity_ids = metadata.get("entity_ids", [])
                     for entity_id in entity_ids:
                         if entity_id:
                             if entity_id not in self.entity_to_chunks:
@@ -889,10 +890,10 @@ class RAGSystem:
 
         except Exception as e:
             logger.error(f"Fallback index rebuild failed: {e}")
-    
+
     def search_all_documents(self, query: str, k: int = 5) -> List[Document]:
         logger.debug(f"Performing global search with query: '{query}', k={k}")
-        
+
         if self.vector_store is None:
             logger.warning("No vector store loaded - cannot perform search")
             return []
@@ -904,15 +905,17 @@ class RAGSystem:
         except Exception as e:
             logger.error(f"Error during global search: {e}")
             return []
-    
+
     def search_documents(
         self,
         query: str,
         k: int = 5,
         doc_ids: Optional[List[str]] = None,
-        entity_ids: Optional[List[str]] = None
+        entity_ids: Optional[List[str]] = None,
     ) -> List[Document]:
-        logger.debug(f"Performing filtered search with query: '{query}', k={k}, doc_ids={doc_ids}, entity_ids={entity_ids}")
+        logger.debug(
+            f"Performing filtered search with query: '{query}', k={k}, doc_ids={doc_ids}, entity_ids={entity_ids}"
+        )
 
         if self.vector_store is None:
             logger.warning("No vector store loaded - cannot perform search")
@@ -937,7 +940,7 @@ class RAGSystem:
         query: str,
         k: int,
         doc_ids: Optional[List[str]] = None,
-        entity_ids: Optional[List[str]] = None
+        entity_ids: Optional[List[str]] = None,
     ) -> List[Document]:
         """Perform search with pre-filtering using chunk indices"""
         logger.debug("Using pre-filtering approach for search")
@@ -953,7 +956,9 @@ class RAGSystem:
         if entity_ids:
             entity_chunk_indices = set()
             logger.debug(f"Filtering by entity_ids: {entity_ids}")
-            logger.debug(f"Available entity_ids in mapping: {list(self.entity_to_chunks.keys())[:10]}...")  # Show first 10
+            logger.debug(
+                f"Available entity_ids in mapping: {list(self.entity_to_chunks.keys())[:10]}..."
+            )  # Show first 10
 
             for entity_id in entity_ids:
                 if entity_id in self.entity_to_chunks:
@@ -983,14 +988,16 @@ class RAGSystem:
         logger.debug(f"Pre-filtering found {len(relevant_indices)} relevant chunks")
 
         # Create a subset vector store or search with index filtering
-        if hasattr(self.vector_store, 'similarity_search_by_vector'):
+        if hasattr(self.vector_store, "similarity_search_by_vector"):
             # Use FAISS search with index filtering
             return self._search_with_index_filtering(query, k, relevant_indices)
         else:
             # Fallback to metadata filtering
             return self._search_with_metadata_filtering(query, k, doc_ids, entity_ids)
 
-    def _search_with_index_filtering(self, query: str, k: int, relevant_indices: List[int]) -> List[Document]:
+    def _search_with_index_filtering(
+        self, query: str, k: int, relevant_indices: List[int]
+    ) -> List[Document]:
         """Search using FAISS index filtering for better performance"""
         try:
             if not self.embeddings or not self.vector_store:
@@ -1002,7 +1009,7 @@ class RAGSystem:
             # Search all vectors and get similarities with indices
             all_scores, all_indices = self.vector_store.index.search(
                 np.array([query_embedding], dtype=np.float32),
-                len(self.chunk_metadata)  # Get all results
+                len(self.chunk_metadata),  # Get all results
             )
 
             # Filter results to only include relevant indices
@@ -1026,11 +1033,7 @@ class RAGSystem:
             return self._search_with_metadata_filtering(query, k, None, None)
 
     def _search_with_metadata_filtering(
-        self,
-        query: str,
-        k: int,
-        doc_ids: Optional[List[str]],
-        entity_ids: Optional[List[str]]
+        self, query: str, k: int, doc_ids: Optional[List[str]], entity_ids: Optional[List[str]]
     ) -> List[Document]:
         """Fallback search using metadata filtering"""
         logger.debug("Using metadata filtering fallback")
@@ -1045,13 +1048,13 @@ class RAGSystem:
             def filter_func(metadata_dict):
                 # Check doc_id filter
                 if doc_ids:
-                    doc_id = metadata_dict.get('metadata', {}).get('doc_id')
+                    doc_id = metadata_dict.get("metadata", {}).get("doc_id")
                     if doc_id not in doc_ids:
                         return False
 
                 # Check entity_ids filter
                 if entity_ids:
-                    doc_entity_ids = metadata_dict.get('metadata', {}).get('entity_ids', [])
+                    doc_entity_ids = metadata_dict.get("metadata", {}).get("entity_ids", [])
                     if not any(entity_id in doc_entity_ids for entity_id in entity_ids):
                         return False
 
@@ -1095,11 +1098,11 @@ class RAGSystem:
         chunk = self.get_chunk_by_id(doc_id, current_chunk_index - 1)
         if chunk:
             return {
-                'content': chunk['chunk']['content'],
-                'doc_id': chunk['metadata']['doc_id'],
-                'chunk_order_index': chunk["chunk"]['chunk_order_index'],
-                'source': chunk['chunk']['source'],
-                'can_navigate': True
+                "content": chunk["chunk"]["content"],
+                "doc_id": chunk["metadata"]["doc_id"],
+                "chunk_order_index": chunk["chunk"]["chunk_order_index"],
+                "source": chunk["chunk"]["source"],
+                "can_navigate": True,
             }
         else:
             return None
@@ -1110,16 +1113,18 @@ class RAGSystem:
         if next_chunk:
             logger.debug(f"Found next chunk: {doc_id}:{current_chunk_index + 1}")
             return {
-                'content': next_chunk['chunk']['content'],
-                'doc_id': next_chunk['metadata']['doc_id'],
-                'chunk_order_index': next_chunk["chunk"]['chunk_order_index'],
-                'source': next_chunk['chunk']['source'],
-                'can_navigate': True
+                "content": next_chunk["chunk"]["content"],
+                "doc_id": next_chunk["metadata"]["doc_id"],
+                "chunk_order_index": next_chunk["chunk"]["chunk_order_index"],
+                "source": next_chunk["chunk"]["source"],
+                "can_navigate": True,
             }
         logger.debug(f"No next chunk for {doc_id}:{current_chunk_index}")
         return None
 
-    def get_chunk_context(self, doc_id: str, chunk_order_index: int, context_size: int = 1) -> Dict[str, Any]:
+    def get_chunk_context(
+        self, doc_id: str, chunk_order_index: int, context_size: int = 1
+    ) -> Dict[str, Any]:
         """Get chunk with surrounding context chunks"""
         current = self.get_chunk_by_id(doc_id, chunk_order_index)
         if not current:
@@ -1146,17 +1151,19 @@ class RAGSystem:
 
         return {
             "current": {
-                'content': current['chunk']['content'],
-                'doc_id': current['metadata']['doc_id'],
-                'chunk_order_index': current["chunk"]['chunk_order_index'],
-                'source': current['chunk']['source'],
-                'can_navigate': True
+                "content": current["chunk"]["content"],
+                "doc_id": current["metadata"]["doc_id"],
+                "chunk_order_index": current["chunk"]["chunk_order_index"],
+                "source": current["chunk"]["source"],
+                "can_navigate": True,
             },
             "previous": list(reversed(previous_chunks)),  # Order from oldest to newest
-            "next": next_chunks
+            "next": next_chunks,
         }
 
-    def semantic_search_within_entity(self, query: str, entity_id: str, k: int = 5) -> List[Dict[str, Any]]:
+    def semantic_search_within_entity(
+        self, query: str, entity_id: str, k: int = 5
+    ) -> List[Dict[str, Any]]:
         """Semantic search scoped to a specific entity with chunk metadata"""
         logger.debug(f"Semantic search within entity {entity_id}: {query}")
 
@@ -1166,33 +1173,39 @@ class RAGSystem:
         # Convert to format with chunk navigation info
         enhanced_results = []
         for doc in results:
-            if hasattr(doc, 'metadata'):
+            if hasattr(doc, "metadata"):
                 metadata = doc.metadata
-                doc_id = metadata.get('metadata', {}).get('doc_id')
-                source = metadata.get('chunk', {}).get('source')
-                chunk_index = metadata.get('chunk', {}).get('chunk_order_index')
+                doc_id = metadata.get("metadata", {}).get("doc_id")
+                source = metadata.get("chunk", {}).get("source")
+                chunk_index = metadata.get("chunk", {}).get("chunk_order_index")
 
                 if doc_id is not None and chunk_index is not None:
-                    enhanced_results.append({
-                        'content': doc.page_content,
-                        'doc_id': doc_id,
-                        'chunk_order_index': chunk_index,
-                        'source': source,
-                        'can_navigate': True
-                    })
+                    enhanced_results.append(
+                        {
+                            "content": doc.page_content,
+                            "doc_id": doc_id,
+                            "chunk_order_index": chunk_index,
+                            "source": source,
+                            "can_navigate": True,
+                        }
+                    )
                 else:
-                    enhanced_results.append({
-                        'content': doc.page_content,
-                        'doc_id': doc_id,
-                        'chunk_order_index': None,
-                        'source': source,
-                        'can_navigate': False
-                    })
+                    enhanced_results.append(
+                        {
+                            "content": doc.page_content,
+                            "doc_id": doc_id,
+                            "chunk_order_index": None,
+                            "source": source,
+                            "can_navigate": False,
+                        }
+                    )
 
         logger.info(f"Found {len(enhanced_results)} chunks for entity {entity_id}")
         return enhanced_results
 
-    def semantic_search_within_document(self, query: str, doc_id: str, k: int = 5) -> List[Dict[str, Any]]:
+    def semantic_search_within_document(
+        self, query: str, doc_id: str, k: int = 5
+    ) -> List[Dict[str, Any]]:
         """Semantic search scoped to a specific document"""
         logger.debug(f"Semantic search within document {doc_id}: {query}")
 
@@ -1201,17 +1214,19 @@ class RAGSystem:
         # Convert to format with chunk navigation info
         enhanced_results = []
         for doc in results:
-            if hasattr(doc, 'metadata'):
+            if hasattr(doc, "metadata"):
                 metadata = doc.metadata
-                chunk_index = metadata.get('chunk', {}).get('chunk_order_index')
+                chunk_index = metadata.get("chunk", {}).get("chunk_order_index")
 
-                enhanced_results.append({
-                    'content': doc.page_content,
-                    'doc_id': doc_id,
-                    'chunk_order_index': chunk_index,
-                    'metadata': metadata,
-                    'can_navigate': chunk_index is not None
-                })
+                enhanced_results.append(
+                    {
+                        "content": doc.page_content,
+                        "doc_id": doc_id,
+                        "chunk_order_index": chunk_index,
+                        "metadata": metadata,
+                        "can_navigate": chunk_index is not None,
+                    }
+                )
 
         logger.info(f"Found {len(enhanced_results)} chunks for document {doc_id}")
         return enhanced_results
@@ -1223,15 +1238,12 @@ class RAGSystem:
         try:
             with get_storage_session() as db:
                 # Get chunks and sort them manually (JSONStorage doesn't support chained sort)
-                chunks = db[Config.CHUNKS_COLLECTION].find(
-                    {"metadata.doc_id": doc_id}
-                )
+                chunks = db[Config.CHUNKS_COLLECTION].find({"metadata.doc_id": doc_id})
 
                 # Sort by chunk_order_index
                 if chunks:
                     chunks = sorted(
-                        chunks,
-                        key=lambda x: x.get('chunk', {}).get('chunk_order_index', 0)
+                        chunks, key=lambda x: x.get("chunk", {}).get("chunk_order_index", 0)
                     )
 
                 logger.info(f"Found {len(chunks)} chunks for document {doc_id}")
@@ -1247,9 +1259,9 @@ class RAGSystem:
 
         try:
             with get_storage_session() as db:
-                docs = list(db[Config.DOC_ID_NAME_MAPPING_COLLECTION].find(
-                    {"entity_ids": entity_id}
-                ))
+                docs = list(
+                    db[Config.DOC_ID_NAME_MAPPING_COLLECTION].find({"entity_ids": entity_id})
+                )
 
                 # Ensure each document has doc_id field for API and agent compatibility
                 # If doc_id is missing, use _id as fallback
@@ -1264,9 +1276,13 @@ class RAGSystem:
             logger.error(f"Error getting entity documents {entity_id}: {e}")
             return []
 
-    def get_chunk_neighbors(self, doc_id: str, chunk_order_index: int, window_size: int = 2) -> List[Dict[str, Any]]:
+    def get_chunk_neighbors(
+        self, doc_id: str, chunk_order_index: int, window_size: int = 2
+    ) -> List[Dict[str, Any]]:
         """Get neighboring chunks within a window"""
-        logger.debug(f"Getting neighbors for {doc_id}:{chunk_order_index} with window {window_size}")
+        logger.debug(
+            f"Getting neighbors for {doc_id}:{chunk_order_index} with window {window_size}"
+        )
 
         neighbors = []
         start_idx = max(0, chunk_order_index - window_size)
@@ -1275,7 +1291,7 @@ class RAGSystem:
         for idx in range(start_idx, end_idx):
             chunk = self.get_chunk_by_id(doc_id, idx)
             if chunk:
-                chunk['is_current'] = (idx == chunk_order_index)
+                chunk["is_current"] = idx == chunk_order_index
                 neighbors.append(chunk)
 
         logger.debug(f"Found {len(neighbors)} neighbor chunks")
@@ -1287,28 +1303,28 @@ class RAGSystem:
 
         # Add navigation info to each result
         for result in search_results:
-            if result['can_navigate']:
-                doc_id = result['doc_id']
-                chunk_idx = result['chunk_order_index']
+            if result["can_navigate"]:
+                doc_id = result["doc_id"]
+                chunk_idx = result["chunk_order_index"]
 
-                result['navigation'] = {
-                    'has_previous': chunk_idx > 0,
-                    'has_next': self.get_next_chunk(doc_id, chunk_idx) is not None,
-                    'document_total_chunks': len(self.get_document_chunks_in_order(doc_id))
+                result["navigation"] = {
+                    "has_previous": chunk_idx > 0,
+                    "has_next": self.get_next_chunk(doc_id, chunk_idx) is not None,
+                    "document_total_chunks": len(self.get_document_chunks_in_order(doc_id)),
                 }
 
         return {
-            'query': query,
-            'entity_id': entity_id,
-            'results': search_results,
-            'total_found': len(search_results)
+            "query": query,
+            "entity_id": entity_id,
+            "results": search_results,
+            "total_found": len(search_results),
         }
-    
-    def save_vector_store(self, save_path: Optional[str]=None):
+
+    def save_vector_store(self, save_path: Optional[str] = None):
         if not save_path:
             save_path = self.vector_store_path
         logger.info(f"Attempting to save vector store to: {save_path}")
-        
+
         if self.vector_store:
             try:
                 os.makedirs(os.path.dirname(save_path), exist_ok=True)
@@ -1319,7 +1335,7 @@ class RAGSystem:
         else:
             logger.warning("No vector store to save")
 
-    def load_vector_store(self, load_path: Optional[str]=None):
+    def load_vector_store(self, load_path: Optional[str] = None):
         """Load vector store from disk"""
         if load_path is None:
             load_path = self.vector_store_path
@@ -1330,9 +1346,7 @@ class RAGSystem:
             try:
                 if self.embeddings:
                     self.vector_store = FAISS.load_local(
-                        load_path,
-                        self.embeddings,
-                        allow_dangerous_deserialization=True
+                        load_path, self.embeddings, allow_dangerous_deserialization=True
                     )
                 logger.info(f"Successfully loaded vector store from {load_path}")
 
@@ -1346,17 +1360,21 @@ class RAGSystem:
             self.load_and_process_documents(Config.DATA_DIR)
             self.save_vector_store(load_path)
 
+
 # Create global singleton instance
 rag_pool = RAGSystemPool()
+
 
 # Helper functions for easy access
 def get_rag_system() -> Optional[RAGSystem]:
     """Get RAG system instance"""
     return rag_pool.get_rag_system()
 
+
 def is_rag_available() -> bool:
     """Check if RAG system is available"""
     return rag_pool.is_available()
+
 
 @contextmanager
 def get_rag_context():
@@ -1364,7 +1382,10 @@ def get_rag_context():
     with rag_pool.get_rag_context() as rag:
         yield rag
 
-def index_document_safe(file_path: str, entity_id: str, metadata: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+
+def index_document_safe(
+    file_path: str, entity_id: str, metadata: Optional[Dict[str, Any]] = None
+) -> Optional[Dict[str, Any]]:
     """Thread-safe document indexing"""
     if not is_rag_available():
         logger.warning("RAG system not available for indexing")
@@ -1376,6 +1397,7 @@ def index_document_safe(file_path: str, entity_id: str, metadata: Optional[Dict[
     except Exception as e:
         logger.error(f"Failed to index document safely: {e}")
         return None
+
 
 def debug_entity_search(entity_id: str):
     """Debug function to check entity mapping issues"""
@@ -1394,11 +1416,15 @@ def debug_entity_search(entity_id: str):
 # ENTITY-SCOPED RAG FUNCTIONS - Parallel Processing with Isolated Indexes
 # ============================================================================
 
-from .manager import File
+from ._manager import File
 
-def index_document_entity_scoped(entity_id: str, file: File,
-                                metadata: Optional[Dict[str, Any]] = None,
-                                entity_dir: Optional[str] = None) -> Optional[Dict[str, Any]]:
+
+def index_document_entity_scoped(
+    entity_id: str,
+    file: File,
+    metadata: Optional[Dict[str, Any]] = None,
+    entity_dir: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
     """
     Index a document to an entity-scoped vector store (faster, isolated access)
 
@@ -1420,8 +1446,9 @@ def index_document_entity_scoped(entity_id: str, file: File,
         return None
 
 
-def index_documents_parallel(entity_documents: Dict[str, List[str]],
-                            metadata: Optional[Dict[str, Any]] = None) -> Dict[str, List[Dict[str, Any]]]:
+def index_documents_parallel(
+    entity_documents: Dict[str, List[str]], metadata: Optional[Dict[str, Any]] = None
+) -> Dict[str, List[Dict[str, Any]]]:
     """
     Index documents for multiple entities in parallel
 
@@ -1446,8 +1473,9 @@ def index_documents_parallel(entity_documents: Dict[str, List[str]],
         return {}
 
 
-def search_entity_scoped(entity_id: str, query: str, k: int = 5,
-                        doc_ids: Optional[List[str]] = None) -> List[Document]:
+def search_entity_scoped(
+    entity_id: str, query: str, k: int = 5, doc_ids: Optional[List[str]] = None
+) -> List[Document]:
     """
     Search within a specific entity's isolated vector store (faster than global search)
 
@@ -1468,8 +1496,9 @@ def search_entity_scoped(entity_id: str, query: str, k: int = 5,
         return []
 
 
-def search_multiple_entities_parallel(entity_ids: List[str], query: str,
-                                      k: int = 5) -> Dict[str, List[Document]]:
+def search_multiple_entities_parallel(
+    entity_ids: List[str], query: str, k: int = 5
+) -> Dict[str, List[Document]]:
     """
     Search across multiple entities in parallel
 

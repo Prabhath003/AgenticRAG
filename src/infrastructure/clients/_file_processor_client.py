@@ -46,11 +46,7 @@ import mimetypes
 class FileProcessorClient:
     """Client for interacting with the file processing API v2.0."""
 
-    def __init__(
-        self,
-        base_url: str = "http://localhost:8003",
-        poll_interval: float = 5.0
-    ):
+    def __init__(self, base_url: str = "http://localhost:8003", poll_interval: float = 5.0):
         """
         Initialize the file processor client.
 
@@ -58,7 +54,7 @@ class FileProcessorClient:
             base_url: Base URL of the API server (default: http://localhost:8003)
             poll_interval: How often to poll for task status in seconds (default: 5.0)
         """
-        self.base_url = base_url.rstrip('/')
+        self.base_url = base_url.rstrip("/")
         self.poll_interval = poll_interval
 
     def _get_mime_type(self, file_path: str) -> str:
@@ -78,21 +74,21 @@ class FileProcessorClient:
         # Fallback mappings for common types
         ext = Path(file_path).suffix.lower()
         mime_map = {
-            '.json': 'application/json',
-            '.md': 'text/markdown',
-            '.txt': 'text/plain',
-            '.pdf': 'application/pdf',
-            '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            '.xls': 'application/vnd.ms-excel',
-            '.png': 'image/png',
-            '.jpg': 'image/jpeg',
-            '.jpeg': 'image/jpeg',
-            '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-            '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            '.doc': 'application/msword',
-            '.ppt': 'application/vnd.ms-powerpoint',
+            ".json": "application/json",
+            ".md": "text/markdown",
+            ".txt": "text/plain",
+            ".pdf": "application/pdf",
+            ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            ".xls": "application/vnd.ms-excel",
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ".doc": "application/msword",
+            ".ppt": "application/vnd.ms-powerpoint",
         }
-        return mime_map.get(ext, 'application/octet-stream')
+        return mime_map.get(ext, "application/octet-stream")
 
     def health_check(self) -> Dict[str, Any]:
         """
@@ -142,11 +138,7 @@ class FileProcessorClient:
         response.raise_for_status()
         return response.json()
 
-    def wait_for_task(
-        self,
-        task_id: str,
-        poll_interval: Optional[float] = None
-    ) -> Dict[str, Any]:
+    def wait_for_task(self, task_id: str, poll_interval: Optional[float] = None) -> Dict[str, Any]:
         """
         Wait for a task to complete and return the result.
 
@@ -181,18 +173,15 @@ class FileProcessorClient:
 
             except requests.exceptions.RequestException as e:
                 # Only re-raise connection/network errors
-                if isinstance(e, (requests.exceptions.ConnectionError,
-                                  requests.exceptions.Timeout)):
+                if isinstance(
+                    e, (requests.exceptions.ConnectionError, requests.exceptions.Timeout)
+                ):
                     raise
                 # For other HTTP errors, retry after waiting
                 time.sleep(poll_interval)
                 continue
 
-    def parse_file_async(
-        self,
-        file_path: str,
-        source: Optional[str] = None
-    ) -> str:
+    def parse_file_async(self, file_path: str, source: Optional[str] = None) -> str:
         """
         Parse a file asynchronously (returns task_id immediately).
 
@@ -213,21 +202,19 @@ class FileProcessorClient:
             raise FileNotFoundError(f"File not found: {file_path}")
 
         # Read file content
-        with open(file_path_obj, 'rb') as f:
+        with open(file_path_obj, "rb") as f:
             file_content = f.read()
 
         # Detect MIME type
         mime_type = self._get_mime_type(str(file_path_obj))
 
         # Prepare files dict
-        files = {
-            'file': (file_path_obj.name, file_content, mime_type)
-        }
+        files = {"file": (file_path_obj.name, file_content, mime_type)}
 
         # Prepare params
         params: Dict[str, Any] = {}
         if source:
-            params['source'] = source
+            params["source"] = source
 
         # Make request
         response = requests.post(
@@ -238,14 +225,14 @@ class FileProcessorClient:
 
         response.raise_for_status()
         result = response.json()
-        return result['task_id']
+        return result["task_id"]
 
     def parse_file(
         self,
         file_path: str,
         source: Optional[str] = None,
         wait: bool = True,
-        poll_interval: Optional[float] = None
+        poll_interval: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
         Parse a file and return markdown content.
@@ -275,16 +262,12 @@ class FileProcessorClient:
             return {
                 "task_id": task_id,
                 "status_url": f"/status/{task_id}",
-                "result_url": f"/result/{task_id}"
+                "result_url": f"/result/{task_id}",
             }
 
         return self.wait_for_task(task_id, poll_interval=poll_interval)
 
-    def chunk_file_async(
-        self,
-        file_path: str,
-        source: Optional[str] = None
-    ) -> str:
+    def chunk_file_async(self, file_path: str, source: Optional[str] = None) -> str:
         """
         Chunk a file asynchronously (returns task_id immediately).
 
@@ -305,39 +288,33 @@ class FileProcessorClient:
             raise FileNotFoundError(f"File not found: {file_path}")
 
         # Read file content
-        with open(file_path_obj, 'rb') as f:
+        with open(file_path_obj, "rb") as f:
             file_content = f.read()
 
         # Detect MIME type
         mime_type = self._get_mime_type(str(file_path_obj))
 
         # Prepare files dict
-        files = {
-            'file': (file_path_obj.name, file_content, mime_type)
-        }
+        files = {"file": (file_path_obj.name, file_content, mime_type)}
 
         # Prepare params
         params: Dict[str, Any] = {}
         if source:
-            params['source'] = source
+            params["source"] = source
 
         # Make request
-        response = requests.post(
-            f"{self.base_url}/chunk",
-            files=files,
-            params=params
-        )
+        response = requests.post(f"{self.base_url}/chunk", files=files, params=params)
 
         response.raise_for_status()
         result = response.json()
-        return result['task_id']
+        return result["task_id"]
 
     def chunk_file(
         self,
         file_path: str,
         source: Optional[str] = None,
         wait: bool = True,
-        poll_interval: Optional[float] = None
+        poll_interval: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
         Parse and chunk a file into smaller segments.
@@ -368,7 +345,7 @@ class FileProcessorClient:
             return {
                 "task_id": task_id,
                 "status_url": f"/status/{task_id}",
-                "result_url": f"/result/{task_id}"
+                "result_url": f"/result/{task_id}",
             }
 
         return self.wait_for_task(task_id, poll_interval=poll_interval)
@@ -380,7 +357,7 @@ class FileProcessorClient:
         source: Optional[str] = None,
         mime_type: Optional[str] = None,
         wait: bool = True,
-        poll_interval: Optional[float] = None
+        poll_interval: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
         Parse file content from bytes (useful when you already have file in memory).
@@ -408,29 +385,23 @@ class FileProcessorClient:
         if not mime_type:
             mime_type = self._get_mime_type(filename)
 
-        files = {
-            'file': (filename, file_content, mime_type)
-        }
+        files = {"file": (filename, file_content, mime_type)}
 
         params: Dict[str, Any] = {}
         if source:
-            params['source'] = source
+            params["source"] = source
 
-        response = requests.post(
-            f"{self.base_url}/parse",
-            files=files,
-            params=params
-        )
+        response = requests.post(f"{self.base_url}/parse", files=files, params=params)
 
         response.raise_for_status()
         result = response.json()
-        task_id = result['task_id']
+        task_id = result["task_id"]
 
         if not wait:
             return {
                 "task_id": task_id,
                 "status_url": f"/status/{task_id}",
-                "result_url": f"/result/{task_id}"
+                "result_url": f"/result/{task_id}",
             }
 
         return self.wait_for_task(task_id, poll_interval=poll_interval)
@@ -442,7 +413,7 @@ class FileProcessorClient:
         source: Optional[str] = None,
         mime_type: Optional[str] = None,
         wait: bool = True,
-        poll_interval: Optional[float] = None
+        poll_interval: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
         Chunk file content from bytes.
@@ -470,38 +441,28 @@ class FileProcessorClient:
         if not mime_type:
             mime_type = self._get_mime_type(filename)
 
-        files = {
-            'file': (filename, file_content, mime_type)
-        }
+        files = {"file": (filename, file_content, mime_type)}
 
         params: Dict[str, Any] = {}
         if source:
-            params['source'] = source
+            params["source"] = source
 
-        response = requests.post(
-            f"{self.base_url}/chunk",
-            files=files,
-            params=params
-        )
+        response = requests.post(f"{self.base_url}/chunk", files=files, params=params)
 
         response.raise_for_status()
         result = response.json()
-        task_id = result['task_id']
+        task_id = result["task_id"]
 
         if not wait:
             return {
                 "task_id": task_id,
                 "status_url": f"/status/{task_id}",
-                "result_url": f"/result/{task_id}"
+                "result_url": f"/result/{task_id}",
             }
 
         return self.wait_for_task(task_id, poll_interval=poll_interval)
 
-    def batch_parse_files_async(
-        self,
-        file_paths: List[str],
-        source: Optional[str] = None
-    ) -> str:
+    def batch_parse_files_async(self, file_paths: List[str], source: Optional[str] = None) -> str:
         """
         Parse multiple files asynchronously (returns task_id immediately).
 
@@ -522,32 +483,28 @@ class FileProcessorClient:
             if not file_path_obj.exists():
                 raise FileNotFoundError(f"File not found: {file_path}")
 
-            with open(file_path_obj, 'rb') as f:
+            with open(file_path_obj, "rb") as f:
                 file_content = f.read()
 
             mime_type = self._get_mime_type(str(file_path_obj))
-            files.append(('files', (file_path_obj.name, file_content, mime_type)))
+            files.append(("files", (file_path_obj.name, file_content, mime_type)))
 
         params: Dict[str, Any] = {}
         if source:
-            params['source'] = source
+            params["source"] = source
 
-        response = requests.post(
-            f"{self.base_url}/batch/parse",
-            files=files,
-            params=params
-        )
+        response = requests.post(f"{self.base_url}/batch/parse", files=files, params=params)
 
         response.raise_for_status()
         result = response.json()
-        return result['task_id']
+        return result["task_id"]
 
     def batch_parse_files(
         self,
         file_paths: List[str],
         source: Optional[str] = None,
         wait: bool = True,
-        poll_interval: Optional[float] = None
+        poll_interval: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
         Parse multiple files in parallel (async batch endpoint).
@@ -583,16 +540,12 @@ class FileProcessorClient:
             return {
                 "task_id": task_id,
                 "status_url": f"/batch/status/{task_id}",
-                "result_url": f"/batch/result/{task_id}"
+                "result_url": f"/batch/result/{task_id}",
             }
 
         return self.wait_for_task(task_id, poll_interval=poll_interval)
 
-    def batch_chunk_files_async(
-        self,
-        file_paths: List[str],
-        source: Optional[str] = None
-    ) -> str:
+    def batch_chunk_files_async(self, file_paths: List[str], source: Optional[str] = None) -> str:
         """
         Chunk multiple files asynchronously (returns task_id immediately).
 
@@ -613,32 +566,28 @@ class FileProcessorClient:
             if not file_path_obj.exists():
                 raise FileNotFoundError(f"File not found: {file_path}")
 
-            with open(file_path_obj, 'rb') as f:
+            with open(file_path_obj, "rb") as f:
                 file_content = f.read()
 
             mime_type = self._get_mime_type(str(file_path_obj))
-            files.append(('files', (file_path_obj.name, file_content, mime_type)))
+            files.append(("files", (file_path_obj.name, file_content, mime_type)))
 
         params: Dict[str, Any] = {}
         if source:
-            params['source'] = source
+            params["source"] = source
 
-        response = requests.post(
-            f"{self.base_url}/batch/chunk",
-            files=files,
-            params=params
-        )
+        response = requests.post(f"{self.base_url}/batch/chunk", files=files, params=params)
 
         response.raise_for_status()
         result = response.json()
-        return result['task_id']
+        return result["task_id"]
 
     def batch_chunk_files(
         self,
         file_paths: List[str],
         source: Optional[str] = None,
         wait: bool = True,
-        poll_interval: Optional[float] = None
+        poll_interval: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
         Chunk multiple files in parallel (async batch endpoint).
@@ -674,7 +623,7 @@ class FileProcessorClient:
             return {
                 "task_id": task_id,
                 "status_url": f"/batch/status/{task_id}",
-                "result_url": f"/batch/result/{task_id}"
+                "result_url": f"/batch/result/{task_id}",
             }
 
         return self.wait_for_task(task_id, poll_interval=poll_interval)
@@ -736,9 +685,7 @@ class FileProcessorClient:
 
 # Convenience functions for quick usage
 def parse_file(
-    file_path: str,
-    source: Optional[str] = None,
-    base_url: str = "http://localhost:8003"
+    file_path: str, source: Optional[str] = None, base_url: str = "http://localhost:8003"
 ) -> Dict[str, Any]:
     """
     Quick helper to parse a file without instantiating a client.
@@ -761,9 +708,7 @@ def parse_file(
 
 
 def chunk_file(
-    file_path: str,
-    source: Optional[str] = None,
-    base_url: str = "http://localhost:8003"
+    file_path: str, source: Optional[str] = None, base_url: str = "http://localhost:8003"
 ) -> Dict[str, Any]:
     """
     Quick helper to chunk a file without instantiating a client.
@@ -786,9 +731,7 @@ def chunk_file(
 
 
 def batch_parse_files(
-    file_paths: List[str],
-    source: Optional[str] = None,
-    base_url: str = "http://localhost:8003"
+    file_paths: List[str], source: Optional[str] = None, base_url: str = "http://localhost:8003"
 ) -> Dict[str, Any]:
     """
     Quick helper to batch parse multiple files without instantiating a client.
@@ -810,9 +753,7 @@ def batch_parse_files(
 
 
 def batch_chunk_files(
-    file_paths: List[str],
-    source: Optional[str] = None,
-    base_url: str = "http://localhost:8003"
+    file_paths: List[str], source: Optional[str] = None, base_url: str = "http://localhost:8003"
 ) -> Dict[str, Any]:
     """
     Quick helper to batch chunk multiple files without instantiating a client.
@@ -861,7 +802,9 @@ if __name__ == "__main__":
         health = client.health_check()
         print(f"   Status: {health['status']}")
         print(f"   CPU: {health.get('cpu_utilization', 'N/A')}")
-        print(f"   Workers: {health.get('current_workers', 'N/A')}/{health.get('max_workers', 'N/A')}")
+        print(
+            f"   Workers: {health.get('current_workers', 'N/A')}/{health.get('max_workers', 'N/A')}"
+        )
         print()
 
         # Parse file (async task-based)
@@ -876,18 +819,18 @@ if __name__ == "__main__":
         result = client.wait_for_task(task_id)
 
         # Check if task was successful
-        status = result.get('status', '')
+        status = result.get("status", "")
         print(f"   Task Status: {status}")
         print(f"   Filename: {result.get('filename', 'N/A')}")
         print(f"   File Type: {result.get('file_type', 'N/A')}")
 
         # Show cost information
-        cost = result.get('estimated_cost_usd', 0)
+        cost = result.get("estimated_cost_usd", 0)
         print(f"   💰 Estimated Cost: ${cost:.6f}")
         print()
 
         # Show files processed
-        files_info = result.get('files', [])
+        files_info = result.get("files", [])
         if files_info:
             print(f"📦 Files Processed: {len(files_info)}")
             for file_info in files_info:
@@ -897,7 +840,7 @@ if __name__ == "__main__":
         print()
 
         # Show results if available
-        results = result.get('results', {})
+        results = result.get("results", {})
         if results:
             print("✅ Parsed Content Available:")
             for file_hash, content in results.items():
@@ -910,7 +853,7 @@ if __name__ == "__main__":
         print()
 
         # Show metrics if available
-        metrics = result.get('metrics', {})
+        metrics = result.get("metrics", {})
         if metrics:
             print("📊 Processing Metrics:")
             for file_hash, metric_info in metrics.items():
@@ -935,5 +878,6 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"❌ Unexpected Error: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)

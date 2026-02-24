@@ -1,0 +1,40 @@
+# Include documentation
+include README.md
+include LICENSE
+include .env.example
+include requirements.txt
+
+# Include documentation files
+recursive-include docs *.md
+recursive-include docs *.txt
+
+# Include configuration files
+include pyproject.toml
+include setup.cfg
+include .gitignore
+
+# Include example files
+recursive-include examples *.py
+recursive-include examples *.json
+recursive-include examples *.md
+
+# Include API documentation
+include CHUNK_INGESTION_API.md
+recursive-include api *.md
+recursive-include api *.txt
+
+# Include security documentation
+include SECURITY.md
+
+# Exclude unnecessary files
+global-exclude __pycache__
+global-exclude *.pyc
+global-exclude *.pyo
+global-exclude *.egg-info
+global-exclude .pytest_cache
+global-exclude .git
+global-exclude .github
+global-exclude .env
+global-exclude logs
+global-exclude data
+global-exclude .DS_Store

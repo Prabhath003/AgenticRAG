@@ -11,10 +11,11 @@ Tests:
 import requests
 import json
 import time
-from typing import Dict, Any
+from typing import Dict, Any, List
 import uuid
 
 API_BASE_URL = "http://localhost:8002"
+
 
 def create_entity(entity_id: str, entity_name: str) -> Dict[str, Any]:
     """Create a test entity"""
@@ -22,19 +23,21 @@ def create_entity(entity_id: str, entity_name: str) -> Dict[str, Any]:
     payload = {
         "entity_id": entity_id,
         "entity_name": entity_name,
-        "description": "Test entity for chunk batch ingestion"
+        "description": "Test entity for chunk batch ingestion",
     }
     response = requests.post(url, json=payload)
     response.raise_for_status()
     return response.json()
 
-def ingest_chunks_batch(entity_id: str, chunks: list) -> Dict[str, Any]:
+
+def ingest_chunks_batch(entity_id: str, chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Batch ingest chunks"""
     url = f"{API_BASE_URL}/api/entities/{entity_id}/chunks/batch"
     payload = {"chunks": chunks}
     response = requests.post(url, json=payload)
     response.raise_for_status()
     return response.json()
+
 
 def create_chunk(chunk_id: str, chunk_order_index: int, text: str, doc_id: str) -> Dict[str, Any]:
     """Helper to create a chunk object"""
@@ -45,16 +48,17 @@ def create_chunk(chunk_id: str, chunk_order_index: int, text: str, doc_id: str) 
             "chunk_order_index": chunk_order_index,
             "source": f"entity_{doc_id}",
             "filename": "test.pdf",
-            "pages": [chunk_order_index + 1]
+            "pages": [chunk_order_index + 1],
         },
         "metadata": {
             "chunk_index": chunk_order_index,
             "tokens": len(text.split()),
             "processed_by": "TestBatch",
             "doc_id": doc_id,
-            "entity_id": "test_entity"
-        }
+            "entity_id": "test_entity",
+        },
     }
+
 
 def main():
     print("=" * 80)
@@ -75,10 +79,18 @@ def main():
         # 2. Create a batch of 5 chunks
         print("\n[2] Creating batch of 5 chunks...")
         batch1_chunks = [
-            create_chunk(f"{doc_id}_chunk_0", 0, "This is the first chunk of the document.", doc_id),
-            create_chunk(f"{doc_id}_chunk_1", 1, "This is the second chunk with more content.", doc_id),
-            create_chunk(f"{doc_id}_chunk_2", 2, "The third chunk continues the narrative.", doc_id),
-            create_chunk(f"{doc_id}_chunk_3", 3, "Fourth chunk adds additional information.", doc_id),
+            create_chunk(
+                f"{doc_id}_chunk_0", 0, "This is the first chunk of the document.", doc_id
+            ),
+            create_chunk(
+                f"{doc_id}_chunk_1", 1, "This is the second chunk with more content.", doc_id
+            ),
+            create_chunk(
+                f"{doc_id}_chunk_2", 2, "The third chunk continues the narrative.", doc_id
+            ),
+            create_chunk(
+                f"{doc_id}_chunk_3", 3, "Fourth chunk adds additional information.", doc_id
+            ),
             create_chunk(f"{doc_id}_chunk_4", 4, "The fifth and final chunk concludes.", doc_id),
         ]
         print(f"✓ Created {len(batch1_chunks)} chunks")
@@ -88,8 +100,12 @@ def main():
         response1 = ingest_chunks_batch(entity_id, batch1_chunks)
         print(f"✓ Response: {json.dumps(response1, indent=2)}")
 
-        assert response1["indexed_chunks"] == 5, f"Expected 5 indexed chunks, got {response1['indexed_chunks']}"
-        assert response1["duplicate_chunks"] == 0, f"Expected 0 duplicates, got {response1['duplicate_chunks']}"
+        assert (
+            response1["indexed_chunks"] == 5
+        ), f"Expected 5 indexed chunks, got {response1['indexed_chunks']}"
+        assert (
+            response1["duplicate_chunks"] == 0
+        ), f"Expected 0 duplicates, got {response1['duplicate_chunks']}"
         print("  → All 5 chunks were indexed (as expected)")
 
         # 4. Create batch with mix of duplicates and new chunks
@@ -106,9 +122,15 @@ def main():
         response2 = ingest_chunks_batch(entity_id, batch2_chunks)
         print(f"✓ Response: {json.dumps(response2, indent=2)}")
 
-        assert response2["indexed_chunks"] == 2, f"Expected 2 indexed chunks, got {response2['indexed_chunks']}"
-        assert response2["duplicate_chunks"] == 3, f"Expected 3 duplicates, got {response2['duplicate_chunks']}"
-        assert response2["total_chunks"] == 5, f"Expected 5 total chunks, got {response2['total_chunks']}"
+        assert (
+            response2["indexed_chunks"] == 2
+        ), f"Expected 2 indexed chunks, got {response2['indexed_chunks']}"
+        assert (
+            response2["duplicate_chunks"] == 3
+        ), f"Expected 3 duplicates, got {response2['duplicate_chunks']}"
+        assert (
+            response2["total_chunks"] == 5
+        ), f"Expected 5 total chunks, got {response2['total_chunks']}"
         print("  → Correctly identified 3 duplicates and indexed 2 new chunks")
 
         # 5. Submit batch with all duplicates
@@ -122,8 +144,12 @@ def main():
         response3 = ingest_chunks_batch(entity_id, batch3_chunks)
         print(f"✓ Response: {json.dumps(response3, indent=2)}")
 
-        assert response3["indexed_chunks"] == 0, f"Expected 0 indexed chunks, got {response3['indexed_chunks']}"
-        assert response3["duplicate_chunks"] == 2, f"Expected 2 duplicates, got {response3['duplicate_chunks']}"
+        assert (
+            response3["indexed_chunks"] == 0
+        ), f"Expected 0 indexed chunks, got {response3['indexed_chunks']}"
+        assert (
+            response3["duplicate_chunks"] == 2
+        ), f"Expected 2 duplicates, got {response3['duplicate_chunks']}"
         print("  → Correctly identified all chunks as duplicates")
 
         print("\n" + "=" * 80)
@@ -146,6 +172,7 @@ def main():
     except Exception as e:
         print(f"\n✗ Error: {e}")
         return False
+
 
 if __name__ == "__main__":
     success = main()

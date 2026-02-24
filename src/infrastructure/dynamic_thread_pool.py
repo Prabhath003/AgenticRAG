@@ -17,7 +17,7 @@ CPU_CHECK_INTERVAL = 10  # Check CPU every 10 seconds
 SCALE_UP_COOLDOWN = 15  # Wait 15 seconds after scaling up
 SCALE_DOWN_COOLDOWN = 5  # Wait 5 seconds after scaling down
 
-MIN_WORKERS = 2     # Minimum workers
+MIN_WORKERS = 2  # Minimum workers
 MAX_WORKERS = max(2, int((os.cpu_count() or 2) * 0.8))  # 80% of vCPUs
 
 # Scaling state tracking
@@ -26,9 +26,11 @@ last_scale_down_time = 0.0
 
 executor_lock = threading.Lock()
 
+
 def get_cpu_utilization() -> float:
     """Get current CPU utilization percentage"""
     return psutil.cpu_percent(interval=1)
+
 
 class DynamicThreadPool:
     """Custom thread pool that can dynamically scale workers based on CPU utilization"""
@@ -36,7 +38,9 @@ class DynamicThreadPool:
     def __init__(self, min_workers: int = 2, max_workers: int = 10):
         self.min_workers = min_workers
         self.max_workers = max_workers
-        self.task_queue: queue.Queue[Optional[Tuple[Callable[..., Any], Tuple[Any, ...], Dict[str, Any], Future[Any]]]] = queue.Queue()
+        self.task_queue: queue.Queue[
+            Optional[Tuple[Callable[..., Any], Tuple[Any, ...], Dict[str, Any], Future[Any]]]
+        ] = queue.Queue()
         self.workers: List[threading.Thread] = []
         self.lock = threading.Lock()
         self.shutdown_flag = threading.Event()
@@ -140,7 +144,9 @@ class DynamicThreadPool:
             for worker in self.workers:
                 worker.join(timeout=5)
 
+
 executor = DynamicThreadPool(min_workers=MIN_WORKERS, max_workers=MAX_WORKERS)
+
 
 def calculate_optimal_workers(cpu_util: float, queue_size: int = 0) -> int:
     """
@@ -183,6 +189,7 @@ def calculate_optimal_workers(cpu_util: float, queue_size: int = 0) -> int:
         target_workers = min(MAX_WORKERS, current_workers + 2)
 
     return max(MIN_WORKERS, min(MAX_WORKERS, target_workers))
+
 
 def adjust_worker_pool():
     """
@@ -247,6 +254,7 @@ def adjust_worker_pool():
 
     except Exception as e:
         logger.error(f"[CPU Monitor] Error adjusting workers: {str(e)}")
+
 
 async def cpu_monitoring_loop():
     """Background task to monitor CPU and adjust workers"""

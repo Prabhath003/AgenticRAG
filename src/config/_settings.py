@@ -2,7 +2,7 @@
 # Copyright (c) 2025 Backend
 # All rights reserved.
 #
-# Developed by: 
+# Developed by:
 # Author: Prabhath Chellingi
 # GitHub: https://github.com/Prabhath003
 # Contact: prabhathchellingi2003@gmail.com
@@ -22,27 +22,28 @@ from ..log_creator import get_file_logger
 
 logger = get_file_logger()
 
+
 class Config:
     # MongoDB Configuration
     USE_MONGO = False
     MONGODB_URL = os.getenv("MONGODB_URL")
     DATABASE_NAME = "gmail-connector"
-    
+
     # RAG Configuration
     EMBEDDINGS_MODEL = "all-MiniLM-L6-v2"
-    
+
     # OpenAI Configuration
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-    
+
     GPT_MODEL = "gpt-4.1-mini"
     TEMPERATURE = 0.3
-    
+
     # Azure OpenAI Configuration
-    AZURE_OPENAI_ENDPOINT = os.getenv('AZURE_OPENAI_ENDPOINT')
-    AZURE_OPENAI_KEY = os.getenv('AZURE_OPENAI_KEY')
+    AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
+    AZURE_OPENAI_KEY = os.getenv("AZURE_OPENAI_KEY")
     AZURE_OPENAI_DEPLOYMENT = "gpt-4.1-mini"
     AZURE_OPENAI_VERSION = "2025-01-01-preview"
-    
+
     # Backend
     BACKEND_PORT = 8001
     DATA_DIR = "data/"
@@ -53,7 +54,7 @@ class Config:
     CHUNKS_COLLECTION = "chunks"
 
     # Email Configuration
-    IMAP_SERVER = 'imap.gmail.com' 
+    IMAP_SERVER = "imap.gmail.com"
 
     # Model inference server
     MODEL_SERVER_URI = "http://localhost:1121/infer"
@@ -69,5 +70,6 @@ class Config:
                         setattr(cls, key, value)
             except Exception as e:
                 logger.error(f"Failed to load config from {config_path}: {e}")
-                
+
+
 Config.load_json_config()

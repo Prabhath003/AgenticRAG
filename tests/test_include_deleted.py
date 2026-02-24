@@ -5,6 +5,12 @@ import os
 import sys
 import tempfile
 import shutil
+import time
+import traceback
+from typing import List, Optional
+
+from src.core import Manager, File
+
 
 def test_include_deleted_parameter():
     """Test include_deleted parameter for list and get functions"""
@@ -24,8 +30,6 @@ def test_include_deleted_parameter():
         shutil.rmtree(test_storage_dir)
 
     # Initialize Manager
-    from src.core.manager import Manager
-    from src.core.models import File
 
     manager = Manager()
 
@@ -73,24 +77,26 @@ def test_include_deleted_parameter():
 
     # List without deleted
     entities = manager.list_entities(include_deleted=False)
-    active_ids = [e.get("_id") for e in entities]
+    active_ids: List[Optional[str]] = [e.get("_id") for e in entities]
     assert "test_entity_2" in active_ids
-    assert not any(id.startswith("[DELETED]") for id in active_ids)
+    assert not any(id.startswith("[DELETED]") if id else False for id in active_ids)
     print(f"   ✓ list_entities(include_deleted=False) returned {len(entities)} active entities")
 
     # List with deleted
     entities_with_deleted = manager.list_entities(include_deleted=True)
-    all_ids = [e.get("_id") for e in entities_with_deleted]
-    assert any(id.startswith("[DELETED]") for id in all_ids)
+    all_ids: List[Optional[str]] = [e.get("_id") for e in entities_with_deleted]
+    assert any(id.startswith("[DELETED]") if id else False for id in all_ids)
     assert len(entities_with_deleted) > len(entities)
-    print(f"   ✓ list_entities(include_deleted=True) returned {len(entities_with_deleted)} total entities")
+    print(
+        f"   ✓ list_entities(include_deleted=True) returned {len(entities_with_deleted)} total entities"
+    )
 
     # Test 4: Test list_files with include_deleted
     print("\n4. Testing list_files with include_deleted parameter...")
-    entity_data = manager.get_entity("test_entity_2")
+    _ = manager.get_entity("test_entity_2")
 
     # Create a temporary file for upload
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
         f.write("Test file content")
         temp_file = f.name
 
@@ -101,7 +107,7 @@ def test_include_deleted_parameter():
         task_id = task["task_id"]
 
         # Wait a bit for processing
-        import time
+
         time.sleep(1)
 
         # Get task details to get doc_id
@@ -111,19 +117,24 @@ def test_include_deleted_parameter():
         if doc_id:
             # List files without deleted
             files = manager.list_files("test_entity_2", include_deleted=False)
-            file_ids = [f.get("_id") for f in files]
+            file_ids: List[Optional[str]] = [f.get("_id") for f in files]
             assert doc_id in file_ids
-            assert not any(id.startswith("[DELETED]") for id in file_ids)
+            assert not any(id.startswith("[DELETED]") if id else False for id in file_ids)
             print(f"   ✓ list_files(include_deleted=False) returned {len(files)} active files")
 
             # Delete file
-            manager.delete_file("test_entity_2", doc_id)
+            if doc_id:
+                manager.delete_file("test_entity_2", doc_id)
 
             # List files with deleted
             files_with_deleted = manager.list_files("test_entity_2", include_deleted=True)
-            all_file_ids = [f.get("_id") for f in files_with_deleted]
-            assert any(id.startswith("[DELETED]") for id in all_file_ids)
-            print(f"   ✓ list_files(include_deleted=True) returned {len(files_with_deleted)} total files")
+            all_file_ids: List[Optional[str]] = [f.get("_id") for f in files_with_deleted]
+            assert any(
+                id.startswith("[DELETED]") if id else False for id in all_file_ids if all_file_ids
+            )
+            print(
+                f"   ✓ list_files(include_deleted=True) returned {len(files_with_deleted)} total files"
+            )
 
             # List files without deleted (should be empty)
             files_active = manager.list_files("test_entity_2", include_deleted=False)
@@ -136,17 +147,20 @@ def test_include_deleted_parameter():
     # Test 5: Test chat session include_deleted (skipped due to heavy dependencies)
     print("\n5. Testing chat session include_deleted parameter...")
     print("   ⊘ Skipped (requires sentence_transformers which is not installed)")
-    print("   Note: Chat session filtering is implemented and works the same way as entity/file filtering")
+    print(
+        "   Note: Chat session filtering is implemented and works the same way as entity/file filtering"
+    )
 
-    print("\n" + "="*50)
+    print("\n" + "=" * 50)
     print("All include_deleted parameter tests passed! ✓")
-    print("="*50)
+    print("=" * 50)
+
 
 if __name__ == "__main__":
     try:
         test_include_deleted_parameter()
     except Exception as e:
         print(f"\n✗ Test failed: {e}")
-        import traceback
+
         traceback.print_exc()
         sys.exit(1)

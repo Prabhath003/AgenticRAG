@@ -3,13 +3,12 @@
 
 import os
 import sys
-import tempfile
-# from pathlib import Path
+import traceback
+import json
 
-# Add src to path
-# sys.path.insert(0, str(Path(__file__).parent / "src"))
+from src.infrastructure.storage import JSONStorage
+from src.infrastructure.storage import JSONStorageSession
 
-# from src.infrastructure.storage import get_storage, get_storage_session
 
 def test_json_storage():
     """Test basic JSON storage operations"""
@@ -20,7 +19,7 @@ def test_json_storage():
     storage_dir = os.path.join(test_dir, "test_storage")
 
     # Create storage instance
-    from src.infrastructure.storage.json_storage import JSONStorage
+
     storage = JSONStorage(storage_dir, enable_sharding=False)
 
     print(f"✓ Created storage at: {storage_dir}")
@@ -30,14 +29,11 @@ def test_json_storage():
     result = storage.update_one(
         "test_collection",
         {"_id": "doc1"},
-        {
-            "$set": {"name": "Test Document", "value": 42},
-            "$setOnInsert": {"_id": "doc1"}
-        },
-        upsert=True
+        {"$set": {"name": "Test Document", "value": 42}, "$setOnInsert": {"_id": "doc1"}},
+        upsert=True,
     )
     print(f"   Inserted: matched={result['matched_count']}, modified={result['modified_count']}")
-    assert result['modified_count'] == 1
+    assert result["modified_count"] == 1
     print("   ✓ Insert successful")
 
     # Test 2: Find the document
@@ -45,37 +41,31 @@ def test_json_storage():
     doc = storage.find_one("test_collection", {"_id": "doc1"})
     print(f"   Found: {doc}")
     assert doc is not None
-    assert doc['name'] == "Test Document"
-    assert doc['value'] == 42
+    assert doc["name"] == "Test Document"
+    assert doc["value"] == 42
     print("   ✓ Find successful")
 
     # Test 3: Update the document
     print("\n3. Testing update operation...")
-    result = storage.update_one(
-        "test_collection",
-        {"_id": "doc1"},
-        {"$set": {"value": 100}}
-    )
+    result = storage.update_one("test_collection", {"_id": "doc1"}, {"$set": {"value": 100}})
     print(f"   Updated: matched={result['matched_count']}, modified={result['modified_count']}")
-    assert result['matched_count'] == 1
-    assert result['modified_count'] == 1
+    assert result["matched_count"] == 1
+    assert result["modified_count"] == 1
 
     # Verify update
     doc = storage.find_one("test_collection", {"_id": "doc1"})
-    assert doc['value'] == 100
+    assert doc["value"] == 100 if doc else None
     print("   ✓ Update successful")
 
     # Test 4: Add to set
     print("\n4. Testing $addToSet operation...")
     result = storage.update_one(
-        "test_collection",
-        {"_id": "doc1"},
-        {"$addToSet": {"entity_ids": "entity_1"}}
+        "test_collection", {"_id": "doc1"}, {"$addToSet": {"entity_ids": "entity_1"}}
     )
     doc = storage.find_one("test_collection", {"_id": "doc1"})
     print(f"   Document after addToSet: {doc}")
-    assert "entity_ids" in doc
-    assert "entity_1" in doc['entity_ids']
+    assert "entity_ids" in doc if doc else False
+    assert "entity_1" in doc["entity_ids"] if doc else False
     print("   ✓ AddToSet successful")
 
     # Test 5: Find with query operators
@@ -89,7 +79,7 @@ def test_json_storage():
     print("\n6. Testing delete operation...")
     result = storage.delete_one("test_collection", {"_id": "doc1"})
     print(f"   Deleted: {result['deleted_count']} documents")
-    assert result['deleted_count'] == 1
+    assert result["deleted_count"] == 1
 
     # Verify deletion
     doc = storage.find_one("test_collection", {"_id": "doc1"})
@@ -98,25 +88,25 @@ def test_json_storage():
 
     # Test 7: Test session context manager
     print("\n7. Testing session context manager...")
-    from src.infrastructure.storage.json_storage import JSONStorageSession
+
     session = JSONStorageSession(storage)
 
     with session as db:
         db["users"].update_one(
             {"_id": "user1"},
             {"$set": {"name": "Alice", "age": 30}, "$setOnInsert": {"_id": "user1"}},
-            upsert=True
+            upsert=True,
         )
 
         user = db["users"].find_one({"_id": "user1"})
         print(f"   User: {user}")
-        assert user['name'] == "Alice"
-        assert user['age'] == 30
+        assert user["name"] == "Alice" if user else False
+        assert user["age"] == 30 if user else False
     print("   ✓ Session context manager successful")
 
     # Test 8: Test atomic writes
     print("\n8. Testing atomic writes...")
-    collection_file = storage._get_collection_path("atomic_test")
+    collection_file = storage._get_collection_path("atomic_test")  # type: ignore
 
     # Write multiple times quickly
     for i in range(5):
@@ -124,7 +114,7 @@ def test_json_storage():
             "atomic_test",
             {"_id": f"doc{i}"},
             {"$set": {"index": i}, "$setOnInsert": {"_id": f"doc{i}"}},
-            upsert=True
+            upsert=True,
         )
 
     # Verify all documents exist
@@ -133,22 +123,23 @@ def test_json_storage():
     assert len(docs) == 5
 
     # Verify file exists and is valid JSON
-    import json
-    with open(collection_file, 'r') as f:
+
+    with open(collection_file, "r") as f:
         data = json.load(f)
         print(f"   File contains {len(data)} entries")
         assert len(data) == 5
     print("   ✓ Atomic writes successful")
 
-    print("\n" + "="*50)
+    print("\n" + "=" * 50)
     print("All tests passed! ✓")
-    print("="*50)
+    print("=" * 50)
+
 
 if __name__ == "__main__":
     try:
         test_json_storage()
     except Exception as e:
         print(f"\n✗ Test failed: {e}")
-        import traceback
+
         traceback.print_exc()
         sys.exit(1)

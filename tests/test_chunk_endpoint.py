@@ -12,8 +12,10 @@ import requests
 import json
 import time
 from typing import Dict, Any
+import uuid
 
 API_BASE_URL = "http://localhost:8002"
+
 
 def create_entity(entity_id: str, entity_name: str) -> Dict[str, Any]:
     """Create a test entity"""
@@ -21,11 +23,12 @@ def create_entity(entity_id: str, entity_name: str) -> Dict[str, Any]:
     payload = {
         "entity_id": entity_id,
         "entity_name": entity_name,
-        "description": "Test entity for chunk ingestion"
+        "description": "Test entity for chunk ingestion",
     }
     response = requests.post(url, json=payload)
     response.raise_for_status()
     return response.json()
+
 
 def ingest_chunk(entity_id: str, chunk_data: Dict[str, Any]) -> Dict[str, Any]:
     """Ingest a chunk"""
@@ -34,12 +37,12 @@ def ingest_chunk(entity_id: str, chunk_data: Dict[str, Any]) -> Dict[str, Any]:
     response.raise_for_status()
     return response.json()
 
+
 def main():
     print("=" * 80)
     print("Testing Chunk Ingestion Endpoint")
     print("=" * 80)
 
-    import uuid
     unique_suffix = uuid.uuid4().hex[:8]
     entity_id = f"test_entity_{unique_suffix}"
     entity_name = "Test Company"
@@ -51,22 +54,22 @@ def main():
         print(f"✓ Entity created: {entity['entity_id']}")
 
         # 2. Prepare chunk data (using the structure provided)
-        chunk_data = {
+        chunk_data: Dict[str, Any] = {
             "chunk_id": "692457c5993bfb88f1cea68f_doc_f7d8b75f_0",
             "markdown": {
                 "text": "**BIZZTM TECHNOLOGY PRIVATE LIMITED**\n\n*Comprehensive Company Analysis Report*\n\nReport Generated: October 28, 2025\n\n### Company Information\n\n| Field | Value |\n| --- | --- |\n| CIN: | U51100HR2020PTC088956 |\n| Industry: | E-commerce |\n| Stage: | Seed |\n| Founded: | 2020 |",
                 "chunk_order_index": 0,
                 "source": "entity_692457c5993bfb88f1cea68f",
                 "filename": "fac9512a-ef91-425f-9e56-66541ef3807a.pdf",
-                "pages": [1, 2, 3, 4, 5, 6]
+                "pages": [1, 2, 3, 4, 5, 6],
             },
             "metadata": {
                 "chunk_index": 0,
                 "tokens": 769,
                 "processed_by": "FileProcessor",
                 "doc_id": "692457c5993bfb88f1cea68f_doc_f7d8b75f",
-                "entity_id": entity_id
-            }
+                "entity_id": entity_id,
+            },
         }
 
         # 3. Submit chunk first time (should be indexed)
@@ -127,6 +130,7 @@ def main():
     except Exception as e:
         print(f"\n✗ Error: {e}")
         return False
+
 
 if __name__ == "__main__":
     success = main()

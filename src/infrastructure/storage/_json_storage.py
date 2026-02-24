@@ -2,7 +2,7 @@
 # Copyright (c) 2025 Backend
 # All rights reserved.
 #
-# Developed by: 
+# Developed by:
 # Author: Prabhath Chellingi
 # GitHub: https://github.com/Prabhath003
 # Contact: prabhathchellingi2003@gmail.com
@@ -48,7 +48,9 @@ class JSONStorage:
         self.storage_dir = Path(storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         self.enable_sharding = enable_sharding
-        logger.info(f"Initialized JSON storage at: {self.storage_dir} (sharding={'enabled' if enable_sharding else 'disabled'})")
+        logger.info(
+            f"Initialized JSON storage at: {self.storage_dir} (sharding={'enabled' if enable_sharding else 'disabled'})"
+        )
 
     @classmethod
     def _get_file_lock(cls, file_path: str) -> threading.Lock:
@@ -64,7 +66,7 @@ class JSONStorage:
         This prevents data loss if the process is killed mid-write.
         """
         # Get the directory of the target file
-        file_dir = os.path.dirname(filename) or '.'
+        file_dir = os.path.dirname(filename) or "."
 
         # Ensure directory exists
         os.makedirs(file_dir, exist_ok=True)
@@ -72,15 +74,15 @@ class JSONStorage:
         # Create temp file in the same directory as target file
         # This ensures atomic rename works (must be on same filesystem)
         fd, temp_path = tempfile.mkstemp(
-            suffix='.tmp',
-            prefix='.tmp_' + os.path.basename(filename) + '_',
+            suffix=".tmp",
+            prefix=".tmp_" + os.path.basename(filename) + "_",
             dir=file_dir,
-            text=False
+            text=False,
         )
 
         try:
             # Write to temp file
-            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2, ensure_ascii=False, default=str)
                 f.flush()
                 os.fsync(f.fileno())  # Ensure data is written to disk
@@ -91,9 +93,9 @@ class JSONStorage:
             # If process is killed during this, rename completes or doesn't happen
             if os.path.exists(filename):
                 # On Windows, need to handle existing file differently
-                if os.name == 'nt':
+                if os.name == "nt":
                     # Create backup first
-                    backup_path = filename + '.bak'
+                    backup_path = filename + ".bak"
                     if os.path.exists(backup_path):
                         os.remove(backup_path)
                     shutil.copy2(filename, backup_path)
@@ -133,7 +135,7 @@ class JSONStorage:
             return None
 
         try:
-            with open(filename, 'r', encoding='utf-8') as f:
+            with open(filename, "r", encoding="utf-8") as f:
                 return json.load(f)
         except json.JSONDecodeError as e:
             logger.error(f"Failed to decode JSON from {filename}: {e}")
@@ -158,7 +160,9 @@ class JSONStorage:
         else:
             return str(self.storage_dir / f"{collection_name}.json")
 
-    def _load_collection(self, collection_name: str, shard_key: Optional[str] = None) -> Dict[str, Any]:
+    def _load_collection(
+        self, collection_name: str, shard_key: Optional[str] = None
+    ) -> Dict[str, Any]:
         """Load entire collection from JSON file (with optional sharding)"""
         file_path = self._get_collection_path(collection_name, shard_key)
         lock = self._get_file_lock(file_path)
@@ -169,7 +173,9 @@ class JSONStorage:
                 return {}
             return data
 
-    def _save_collection(self, collection_name: str, data: Dict[str, Any], shard_key: Optional[str] = None) -> None:
+    def _save_collection(
+        self, collection_name: str, data: Dict[str, Any], shard_key: Optional[str] = None
+    ) -> None:
         """Save entire collection to JSON file (with optional sharding)"""
         file_path = self._get_collection_path(collection_name, shard_key)
         lock = self._get_file_lock(file_path)
@@ -212,8 +218,9 @@ class JSONStorage:
 
         return None
 
-    def find(self, collection_name: str, query: Dict[str, Any] = None,
-             projection: Dict[str, int] = None) -> List[Dict[str, Any]]:
+    def find(
+        self, collection_name: str, query: Dict[str, Any] = None, projection: Dict[str, int] = None
+    ) -> List[Dict[str, Any]]:
         """Find all documents matching the query"""
         # Try to detect shard key from query for optimized access
         shard_key = self._extract_shard_key(query) if query else None
@@ -254,8 +261,13 @@ class JSONStorage:
 
         return None
 
-    def update_one(self, collection_name: str, query: Dict[str, Any],
-                   update: Dict[str, Any], upsert: bool = False) -> Dict[str, int]:
+    def update_one(
+        self,
+        collection_name: str,
+        query: Dict[str, Any],
+        update: Dict[str, Any],
+        upsert: bool = False,
+    ) -> Dict[str, int]:
         """Update a single document with shard optimization"""
         # Extract shard key from query or update data
         shard_key = self._extract_shard_key(query)
@@ -313,7 +325,12 @@ class JSONStorage:
                             new_doc[field].append(value)
 
                 # Generate ID from query or use a default
-                doc_id = query.get("_id") or query.get("doc_id") or query.get("entity_id") or str(len(collection))
+                doc_id = (
+                    query.get("_id")
+                    or query.get("doc_id")
+                    or query.get("entity_id")
+                    or str(len(collection))
+                )
                 new_doc["_id"] = doc_id
                 collection[doc_id] = new_doc
                 self._atomic_write_json(collection, file_path)
@@ -353,8 +370,9 @@ class JSONStorage:
 
         return None
 
-    def update_many(self, collection_name: str, query: Dict[str, Any],
-                    update: Dict[str, Any]) -> Dict[str, int]:
+    def update_many(
+        self, collection_name: str, query: Dict[str, Any], update: Dict[str, Any]
+    ) -> Dict[str, int]:
         """Update multiple documents with shard optimization"""
         shard_key = self._extract_shard_key(query)
 
@@ -477,7 +495,11 @@ class JSONStorage:
             doc_shard_key = None
             if "entity_id" in doc:
                 doc_shard_key = doc["entity_id"]
-            elif "entity_ids" in doc and isinstance(doc["entity_ids"], list) and len(doc["entity_ids"]) > 0:
+            elif (
+                "entity_ids" in doc
+                and isinstance(doc["entity_ids"], list)
+                and len(doc["entity_ids"]) > 0
+            ):
                 doc_shard_key = doc["entity_ids"][0]
 
             if doc_shard_key:
@@ -489,7 +511,9 @@ class JSONStorage:
         for shard_key, shard_data in shards.items():
             self._save_collection(collection_name, shard_data, shard_key)
 
-    def aggregate(self, collection_name: str, pipeline: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def aggregate(
+        self, collection_name: str, pipeline: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
         """Basic aggregation support"""
         collection = self._load_collection(collection_name)
         docs = list(collection.values())
@@ -578,7 +602,7 @@ class JSONStorage:
 
     def _get_nested_value(self, doc: Dict[str, Any], key: str) -> Any:
         """Get value from nested document using dot notation"""
-        keys = key.split('.')
+        keys = key.split(".")
         value = doc
 
         for k in keys:
@@ -637,7 +661,7 @@ class JSONStorage:
 
     def _set_nested_value(self, doc: Dict[str, Any], key: str, value: Any) -> None:
         """Set value in nested document using dot notation"""
-        keys = key.split('.')
+        keys = key.split(".")
         current = doc
 
         for k in keys[:-1]:
@@ -649,7 +673,7 @@ class JSONStorage:
 
     def _unset_nested_value(self, doc: Dict[str, Any], key: str) -> bool:
         """Unset value in nested document using dot notation. Returns True if value was deleted."""
-        keys = key.split('.')
+        keys = key.split(".")
         current = doc
 
         for k in keys[:-1]:
@@ -675,7 +699,9 @@ class JSONStorage:
 
         return result
 
-    def _group_stage(self, docs: List[Dict[str, Any]], group_spec: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _group_stage(
+        self, docs: List[Dict[str, Any]], group_spec: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
         """Apply $group aggregation stage"""
         groups: Dict[Any, Dict[str, Any]] = {}
 
@@ -717,7 +743,9 @@ class JSONStorage:
                                 groups[key_value][field].append(push_doc)
                             elif isinstance(op_field, str) and op_field.startswith("$"):
                                 # Push a field value
-                                groups[key_value][field].append(self._get_nested_value(doc, op_field[1:]))
+                                groups[key_value][field].append(
+                                    self._get_nested_value(doc, op_field[1:])
+                                )
 
         return list(groups.values())
 
@@ -735,7 +763,7 @@ class JSONStorageSession:
         # No cleanup needed for JSON storage
         pass
 
-    def __getitem__(self, collection_name: str) -> 'JSONCollection':
+    def __getitem__(self, collection_name: str) -> "JSONCollection":
         """Allow dictionary-like access to collections"""
         return JSONCollection(self.storage, collection_name)
 
@@ -747,7 +775,9 @@ class JSONCollection:
         self.storage = storage
         self.collection_name = collection_name
 
-    def find_one(self, query: Dict[str, Any] = None, projection: Dict[str, int] = None) -> Optional[Dict[str, Any]]:
+    def find_one(
+        self, query: Dict[str, Any] = None, projection: Dict[str, int] = None
+    ) -> Optional[Dict[str, Any]]:
         """Find a single document"""
         if query is None:
             query = {}
@@ -804,12 +834,20 @@ class JSONCollection:
 
         return DeleteResult(result["deleted_count"])
 
+    def count_documents(self, query: Dict[str, Any] = None) -> int:
+        """Count documents matching the query"""
+        if query is None:
+            query = {}
+        results = self.storage.find(self.collection_name, query)
+        return len(results)
+
     def aggregate(self, pipeline: List[Dict[str, Any]]):
         """Aggregate documents"""
         return self.storage.aggregate(self.collection_name, pipeline)
 
     def sort(self, key: str, direction: int = 1):
         """Return a cursor-like object with sort capability"""
+
         class SortableCursor:
             def __init__(self, collection, key, direction):
                 self.collection = collection
@@ -825,10 +863,10 @@ class JSONCollection:
                 results = self.collection.storage.find(self.collection.collection_name, self._query)
                 # Simple sorting by nested key
                 try:
-                    key_parts = self.key.split('.')
+                    key_parts = self.key.split(".")
                     results.sort(
-                        key=lambda x: self.collection.storage._get_nested_value(x, self.key) or '',
-                        reverse=(self.direction == -1)
+                        key=lambda x: self.collection.storage._get_nested_value(x, self.key) or "",
+                        reverse=(self.direction == -1),
                     )
                 except Exception as e:
                     logger.warning(f"Failed to sort results: {e}")
@@ -847,6 +885,7 @@ def get_storage() -> JSONStorage:
 
     if _storage_instance is None:
         from ...config import Config
+
         storage_dir = os.path.join(Config.DATA_DIR, "storage")
         _storage_instance = JSONStorage(storage_dir, enable_sharding=False)
 

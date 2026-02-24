@@ -23,18 +23,25 @@ from fastapi.responses import StreamingResponse, JSONResponse, ORJSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
-from .models import (
-    EntityCreate, ChatSessionCreate, ChatRequest, HealthResponse,
-    KnowledgeGraphRequest, ChunkCreate, ChunkIngestResponse,
-    ChunkBatchIngestRequest, ChunkBatchIngestResponse
+from ._models import (
+    EntityCreate,
+    ChatSessionCreate,
+    ChatRequest,
+    HealthResponse,
+    KnowledgeGraphRequest,
+    ChunkCreate,
+    ChunkIngestResponse,
+    ChunkBatchIngestRequest,
+    ChunkBatchIngestResponse,
 )
 
 from src.log_creator import get_file_logger
-from src.core.manager import Manager
-from src.core.models import File as ManagerFile
+from src.core import Manager
+from src.core import File as ManagerFile
 from src.infrastructure.dynamic_thread_pool import cpu_monitoring_loop, executor
 
 logger = get_file_logger()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
@@ -47,10 +54,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Start CPU monitoring task
     cpu_monitor_task = asyncio.create_task(cpu_monitoring_loop())
     logger.info("[Startup] CPU monitoring task started")
-    
+
     try:
         yield
-        
+
         logger.info("Shutting down API server...")
         # Cancel CPU monitoring task
         if cpu_monitor_task and not cpu_monitor_task.done():
@@ -66,9 +73,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
         # Shutdown DynamicThreadPool
         logger.info("Shutting down upload DynamicThreadPool...")
-        executor.shutdown(wait=True)        
+        executor.shutdown(wait=True)
     finally:
         logger.info("Shutdown complete")
+
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -78,7 +86,7 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan,
-    default_response_class=ORJSONResponse
+    default_response_class=ORJSONResponse,
 )
 
 # Add CORS middleware
@@ -117,6 +125,7 @@ cpu_monitor_task = None
 # Entity Management Endpoints
 # ============================================================================
 
+
 @app.post("/api/entities", tags=["Entities"])
 async def create_entity(entity: EntityCreate):
     """
@@ -131,10 +140,7 @@ async def create_entity(entity: EntityCreate):
     """
     try:
         return task_manager.create_entity(
-            entity.entity_id,
-            entity.entity_name,
-            entity.description,
-            entity.metadata
+            entity.entity_id, entity.entity_name, entity.description, entity.metadata
         )
 
     except ValueError as ve:
@@ -150,7 +156,7 @@ async def create_entity(entity: EntityCreate):
 async def get_entity(entity_id: str):
     """Get entity details by ID"""
     try:
-       return task_manager.get_entity(entity_id)
+        return task_manager.get_entity(entity_id)
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except HTTPException:
@@ -188,6 +194,7 @@ async def delete_entity(entity_id: str) -> Dict[str, Any]:
         logger.error(f"Error deleting entity: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 # ============================================================================
 # File Management Endpoints
 # ============================================================================
@@ -198,7 +205,7 @@ async def upload_file(
     entity_id: str,
     file: UploadFile = File(...),
     description: Optional[str] = Form(None),
-    source: Optional[str] = Form(None)
+    source: Optional[str] = Form(None),
 ):
     """
     Upload a file to an entity (async - returns task_id)
@@ -212,7 +219,7 @@ async def upload_file(
     Returns task_id to poll for status
     File processing happens in background ThreadPoolExecutor
     """
-    try:        
+    try:
         if file.filename:
             # Sanitize filename to prevent path traversal attacks
             filename = os.path.basename(file.filename)
@@ -224,10 +231,7 @@ async def upload_file(
             content = await file.read()
 
             return task_manager.upload_file(
-                entity_id,
-                ManagerFile(filename=filename, content=content),
-                description,
-                source
+                entity_id, ManagerFile(filename=filename, content=content), description, source
             )
 
     except HTTPException:
@@ -235,6 +239,7 @@ async def upload_file(
     except Exception as e:
         logger.error(f"Error creating upload task: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/api/tasks/{task_id}", tags=["Files"])
 async def get_task_status(task_id: str):
@@ -244,7 +249,7 @@ async def get_task_status(task_id: str):
     Poll this endpoint to check upload progress
     """
     try:
-       return task_manager.get_task_status(task_id)
+        return task_manager.get_task_status(task_id)
 
     except ValueError as ve:
         raise HTTPException(status_code=404, detail=str(ve))
@@ -253,6 +258,7 @@ async def get_task_status(task_id: str):
     except Exception as e:
         logger.error(f"Error getting task status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/api/entities/{entity_id}/files", tags=["Files"])
 async def list_files(entity_id: str):
@@ -267,6 +273,7 @@ async def list_files(entity_id: str):
     except Exception as e:
         logger.error(f"Error listing files: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/api/entities/{entity_id}/chunks", response_model=ChunkIngestResponse, tags=["Files"])
 async def ingest_chunk(entity_id: str, chunk: ChunkCreate):
@@ -298,7 +305,12 @@ async def ingest_chunk(entity_id: str, chunk: ChunkCreate):
         logger.error(f"Error ingesting chunk: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/entities/{entity_id}/chunks/batch", response_model=ChunkBatchIngestResponse, tags=["Files"])
+
+@app.post(
+    "/api/entities/{entity_id}/chunks/batch",
+    response_model=ChunkBatchIngestResponse,
+    tags=["Files"],
+)
 async def ingest_chunks_batch(entity_id: str, request: ChunkBatchIngestRequest):
     """
     Batch ingest multiple chunks with automatic duplicate detection
@@ -332,6 +344,7 @@ async def ingest_chunks_batch(entity_id: str, request: ChunkBatchIngestRequest):
         logger.error(f"Error ingesting chunk batch: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 # @app.delete("/api/entities/{entity_id}/files/{doc_id}", tags=["Files"])
 # async def delete_file(entity_id: str, doc_id: str):
 #     """Mark a file as inactive (soft delete) in an entity"""
@@ -349,6 +362,7 @@ async def ingest_chunks_batch(entity_id: str, request: ChunkBatchIngestRequest):
 # Chat Session Endpoints
 # ============================================================================
 
+
 @app.post("/api/chat/sessions", tags=["Chat"])
 async def create_chat_session(session: ChatSessionCreate):
     """
@@ -358,9 +372,7 @@ async def create_chat_session(session: ChatSessionCreate):
     """
     try:
         return task_manager.create_chat_session(
-            session.entity_id,
-            session.session_name,
-            metadata=session.metadata
+            session.entity_id, session.session_name, metadata=session.metadata
         )
 
     except ValueError as ve:
@@ -371,17 +383,19 @@ async def create_chat_session(session: ChatSessionCreate):
         logger.error(f"Error creating chat session: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @app.get("/api/chat/sessions/{session_id}", tags=["Chat"])
 async def get_chat_session(session_id: str):
     """Get chat session details"""
     try:
         return task_manager.get_chat_session(session_id)
-    
+
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error getting chat session: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/api/entities/{entity_id}/sessions", tags=["Chat"])
 async def list_entity_sessions(entity_id: str):
@@ -393,6 +407,7 @@ async def list_entity_sessions(entity_id: str):
     except Exception as e:
         logger.error(f"Error listing sessions: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.delete("/api/chat/sessions/{session_id}", tags=["Chat"])
 async def delete_chat_session(session_id: str) -> Dict[str, Any]:
@@ -406,6 +421,7 @@ async def delete_chat_session(session_id: str) -> Dict[str, Any]:
         logger.error(f"Error deleting session: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @app.get("/api/chat/sessions/{session_id}/messages", tags=["Chat"])
 async def get_chat_history(session_id: str):
     """Get chat history for a session"""
@@ -416,6 +432,7 @@ async def get_chat_history(session_id: str):
     except Exception as e:
         logger.error(f"Error getting chat history: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/api/chat", tags=["Chat"])
 async def chat(request: ChatRequest):
@@ -444,12 +461,11 @@ async def chat(request: ChatRequest):
 
         # Stream response
         if request.stream:
+
             async def generate():
                 try:
                     response_generator = task_manager.chat_session_converse(
-                        request.session_id,
-                        request.message,
-                        stream=True
+                        request.session_id, request.message, stream=True
                     )
                     async for response_obj in response_generator:
                         # Yield JSON object with newline delimiter
@@ -467,15 +483,13 @@ async def chat(request: ChatRequest):
                 headers={
                     "Cache-Control": "no-cache",
                     "Connection": "keep-alive",
-                }
+                },
             )
         else:
             # Non-streaming response
             try:
                 response_coro = task_manager.chat_session_converse(
-                    request.session_id,
-                    request.message,
-                    stream=False
+                    request.session_id, request.message, stream=False
                 )
                 # Await the coroutine returned by the non-streaming chat
                 response_data = await response_coro
@@ -494,6 +508,7 @@ async def chat(request: ChatRequest):
     finally:
         # Ensure cleanup for both streaming and non-streaming
         pass
+
 
 # ============================================================================
 # Search Endpoints
@@ -557,6 +572,7 @@ async def chat(request: ChatRequest):
 # Knowledge Graph Endpoints
 # ============================================================================
 
+
 @app.get("/api/knowledge-graph", tags=["Knowledge Graph"])
 async def get_knowledge_graph(request: KnowledgeGraphRequest):
     """
@@ -584,6 +600,7 @@ async def get_knowledge_graph(request: KnowledgeGraphRequest):
 # Request Tracking & Cost Reporting Endpoints
 # ============================================================================
 
+
 @app.get("/api/tasks/{task_id}/cost", tags=["Tracking"])
 async def get_task_cost(task_id: str):
     return {"message": "Not implemented yet"}
@@ -598,6 +615,7 @@ async def get_cost_report(entity_id: Optional[str] = None, session_id: Optional[
 # Health & Info Endpoints
 # ============================================================================
 
+
 @app.get("/health", response_model=HealthResponse, tags=["System"])
 async def health_check():
     """Health check endpoint"""
@@ -609,15 +627,12 @@ async def health_check():
             status="healthy",
             version="1.0.0",
             entities_loaded=len(entities),
-            total_documents=total_docs
+            total_documents=total_docs,
         )
     except Exception as e:
         logger.error(f"Health check error: {e}")
         return HealthResponse(
-            status="degraded",
-            version="1.0.0",
-            entities_loaded=0,
-            total_documents=0
+            status="degraded", version="1.0.0", entities_loaded=0, total_documents=0
         )
 
 
@@ -693,18 +708,15 @@ async def root():
         "message": "Entity-Scoped RAG API",
         "version": "1.0.0",
         "docs": "/docs",
-        "health": "/health"
+        "health": "/health",
     }
-    
+
+
 # Exception handlers
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     return JSONResponse(
-        status_code=exc.status_code,
-        content={
-            "error": str(exc.detail),
-            "detail": str(exc)
-        }
+        status_code=exc.status_code, content={"error": str(exc.detail), "detail": str(exc)}
     )
 
 
@@ -712,11 +724,7 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 async def general_exception_handler(request: Request, exc: Exception):
     logger.error(f"Unhandled exception: {exc}")
     return JSONResponse(
-        status_code=500,
-        content={
-            "error": "Internal server error",
-            "detail": str(exc)
-        }
+        status_code=500, content={"error": "Internal server error", "detail": str(exc)}
     )
 
 
@@ -725,10 +733,4 @@ async def general_exception_handler(request: Request, exc: Exception):
 # ============================================================================
 
 if __name__ == "__main__":
-    uvicorn.run(
-        "main:app",
-        host="0.0.0.0",
-        port=8002,
-        reload=True,
-        log_level="info"
-    )
+    uvicorn.run("main:app", host="0.0.0.0", port=8002, reload=True, log_level="info")

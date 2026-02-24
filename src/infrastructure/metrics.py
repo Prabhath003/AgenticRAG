@@ -7,26 +7,32 @@ from enum import Enum
 
 class ServiceType(str, Enum):
     """Services used for processing."""
-    OPENAI = "openai" 
+
+    OPENAI = "openai"
     FILE_PROCESSOR = "file_processor"
     NATIVE = "native"  # For JSON, MD, TXT files
-    TRANSFORMER = "transformer"  # For local transformer models (tokenizers, embeddings, etc.) - may use GPU
+    TRANSFORMER = (
+        "transformer"  # For local transformer models (tokenizers, embeddings, etc.) - may use GPU
+    )
 
 
 class TaskType(str, Enum):
     """Types of tasks tracked."""
+
     UPLOAD = "upload"
     QUERY = "query"
 
 
 class TaskStatus(str, Enum):
     """Task execution status."""
+
     QUEUED = "queued"
     PROCESSING = "processing"
     COMPLETED = "completed"
     COMPLETED_PARTIAL = "completed_partial"
     FAILED = "failed"
-    
+
+
 @dataclass
 class Service:
     service_type: ServiceType
@@ -38,21 +44,22 @@ class Service:
         return {
             "service_type": self.service_type.value,
             "breakdown": self.breakdown,
-            "estimated_cost_usd": round(self.estimated_cost_usd, 6)
+            "estimated_cost_usd": round(self.estimated_cost_usd, 6),
         }
-        
+
     @staticmethod
     def from_dict(data: Dict[str, Any]):
         return Service(
             ServiceType(data.get("service_type", "native")),
             breakdown=data.get("breakdown", {}),
-            estimated_cost_usd=data.get("estimated_cost_usd", 0)
+            estimated_cost_usd=data.get("estimated_cost_usd", 0),
         )
-    
+
 
 @dataclass
 class ProcessingMetrics:
     """Metrics for file processing operations."""
+
     services_used: List[Service] = field(default_factory=List[Service])
     processing_time_seconds: float = 0.0
 
@@ -66,5 +73,5 @@ class ProcessingMetrics:
         return {
             "services_used": [service.to_dict() for service in self.services_used],
             "processing_time_seconds": self.processing_time_seconds,
-            "estimated_cost_usd": round(self.estimated_cost_usd, 4)
+            "estimated_cost_usd": round(self.estimated_cost_usd, 4),
         }

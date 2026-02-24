@@ -10,13 +10,12 @@ import os
 import sys
 import time
 import tempfile
-from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor
+from typing import Dict, Any, List, Optional, Tuple
+import traceback
 
-# Add src to path
-# sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
-from src.core.entity_scoped_rag import get_entity_rag_manager
+from src.core import File
+from src.core._entity_scoped_rag import get_entity_rag_manager
 from src.log_creator import get_file_logger
 
 logger = get_file_logger()
@@ -27,26 +26,29 @@ def create_test_document(filename: str, content: str) -> str:
     temp_dir = tempfile.mkdtemp()
     file_path = os.path.join(temp_dir, filename)
 
-    with open(file_path, 'w') as f:
+    with open(file_path, "w") as f:
         f.write(content)
 
     return file_path
 
 
-def upload_document(entity_id: str, file_path: str, doc_num: int):
+def upload_document(entity_id: str, file_path: str, doc_num: int) -> Dict[str, Any]:
     """Upload a single document and measure time"""
     manager = get_entity_rag_manager()
 
+    with open(file_path, "rb") as f:
+        content = f.read()
+
     start_time = time.time()
-    result = manager.add_document(entity_id, file_path)
+    result = manager.add_document(entity_id, File(os.path.basename(file_path), content))
     elapsed = time.time() - start_time
 
     return {
-        'entity_id': entity_id,
-        'doc_num': doc_num,
-        'elapsed': elapsed,
-        'success': result is not None,
-        'doc_id': result.get('doc_id') if result else None
+        "entity_id": entity_id,
+        "doc_num": doc_num,
+        "elapsed": elapsed,
+        "success": result is not None,
+        "doc_id": result.get("doc_id") if result else None,
     }
 
 
@@ -58,14 +60,14 @@ def test_sequential_upload(num_entities: int, docs_per_entity: int):
     logger.info(f"{'='*60}")
 
     # Create test documents
-    test_files = []
+    test_files: List[str] = []
     for i in range(docs_per_entity):
         content = f"Test document {i}\n" + ("Lorem ipsum dolor sit amet. " * 100)
         file_path = create_test_document(f"test_doc_{i}.txt", content)
         test_files.append(file_path)
 
     start_time = time.time()
-    results = []
+    results: List[Dict[str, Any]] = []
 
     # Sequential upload
     for entity_num in range(num_entities):
@@ -90,7 +92,9 @@ def test_sequential_upload(num_entities: int, docs_per_entity: int):
     return total_time, results
 
 
-def test_parallel_upload(num_entities: int, docs_per_entity: int, max_workers: int = None):
+def test_parallel_upload(
+    num_entities: int, docs_per_entity: int, max_workers: Optional[int] = None
+):
     """Test parallel document upload"""
     if max_workers is None:
         max_workers = min(32, (os.cpu_count() or 4) * 2)
@@ -102,18 +106,18 @@ def test_parallel_upload(num_entities: int, docs_per_entity: int, max_workers: i
     logger.info(f"{'='*60}")
 
     # Create test documents
-    test_files = []
+    test_files: List[str] = []
     for i in range(docs_per_entity):
         content = f"Test document {i}\n" + ("Lorem ipsum dolor sit amet. " * 100)
         file_path = create_test_document(f"test_doc_{i}.txt", content)
         test_files.append(file_path)
 
     start_time = time.time()
-    results = []
+    results: List[Dict[str, Any]] = []
 
     # Parallel upload
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = []
+        futures: List[Tuple[str, int, Future[Dict[str, Any]]]] = []
 
         for entity_num in range(num_entities):
             entity_id = f"entity_{entity_num}"
@@ -129,12 +133,9 @@ def test_parallel_upload(num_entities: int, docs_per_entity: int, max_workers: i
                 logger.info(f"✓ {entity_id}/doc_{doc_num}: {result['elapsed']:.2f}s")
             except Exception as e:
                 logger.error(f"✗ {entity_id}/doc_{doc_num}: {e}")
-                results.append({
-                    'entity_id': entity_id,
-                    'doc_num': doc_num,
-                    'success': False,
-                    'elapsed': 0
-                })
+                results.append(
+                    {"entity_id": entity_id, "doc_num": doc_num, "success": False, "elapsed": 0}
+                )
 
     total_time = time.time() - start_time
     avg_time = total_time / len(results) if results else 0
@@ -161,10 +162,10 @@ def main():
     MAX_WORKERS = 8
 
     # Test 1: Sequential upload (baseline)
-    seq_time, seq_results = test_sequential_upload(NUM_ENTITIES, DOCS_PER_ENTITY)
+    seq_time, _ = test_sequential_upload(NUM_ENTITIES, DOCS_PER_ENTITY)
 
     # Test 2: Parallel upload
-    par_time, par_results = test_parallel_upload(NUM_ENTITIES, DOCS_PER_ENTITY, MAX_WORKERS)
+    par_time, _ = test_parallel_upload(NUM_ENTITIES, DOCS_PER_ENTITY, MAX_WORKERS)
 
     # Compare results
     speedup = seq_time / par_time if par_time > 0 else 0
@@ -194,6 +195,6 @@ if __name__ == "__main__":
         sys.exit(0 if speedup > 1.0 else 1)
     except Exception as e:
         logger.error(f"Test failed: {e}")
-        import traceback
+
         traceback.print_exc()
         sys.exit(1)

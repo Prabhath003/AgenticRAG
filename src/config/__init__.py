@@ -1,5 +1,5 @@
 """Configuration module for Gmail Connector"""
 
-from .settings import Config
+from ._settings import Config
 
-__all__ = ['Config']
+__all__ = ["Config"]

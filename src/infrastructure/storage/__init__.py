@@ -2,7 +2,7 @@
 # Copyright (c) 2025 Backend
 # All rights reserved.
 #
-# Developed by: 
+# Developed by:
 # Author: Prabhath Chellingi
 # GitHub: https://github.com/Prabhath003
 # Contact: prabhathchellingi2003@gmail.com
@@ -13,18 +13,18 @@
 
 """Storage module for JSON-based data persistence"""
 
-from .json_storage import (
+from ._json_storage import (
     JSONStorage,
     JSONStorageSession,
     JSONCollection,
     get_storage,
-    get_storage_session
+    get_storage_session,
 )
 
 __all__ = [
-    'JSONStorage',
-    'JSONStorageSession',
-    'JSONCollection',
-    'get_storage',
-    'get_storage_session'
+    "JSONStorage",
+    "JSONStorageSession",
+    "JSONCollection",
+    "get_storage",
+    "get_storage_session",
 ]

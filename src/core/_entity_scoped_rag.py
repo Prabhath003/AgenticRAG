@@ -39,11 +39,10 @@ from langchain.schema import Document
 # from ..infrastructure import chunk_file
 from ..config import Config
 from ..log_creator import get_file_logger
-from ..infrastructure.storage import get_storage_session
 from ..infrastructure.clients import FileProcessorClient
 from ..infrastructure.metrics import Service, ServiceType
-from .models import File
-from ..infrastructure.storage.json_storage import JSONStorage
+from ._models import File
+from ..infrastructure.storage import JSONStorage
 
 # Initialize tokenizer for cost calculation
 try:
@@ -52,6 +51,7 @@ except Exception:
     tiktoken_encoding = None
 
 logger = get_file_logger()
+
 
 class EntityVectorStore:
     """
@@ -116,7 +116,7 @@ class EntityVectorStore:
                     self.vector_store = FAISS.load_local(
                         self.vector_store_path,
                         self.embeddings,
-                        allow_dangerous_deserialization=True
+                        allow_dangerous_deserialization=True,
                     )
                 logger.info(f"Loaded vector store for entity {self.entity_id}")
             except Exception as e:
@@ -148,11 +148,15 @@ class EntityVectorStore:
                 if content_hash and doc_id:
                     self.document_hashes[content_hash] = doc_id
 
-            logger.debug(f"Loaded {len(self.document_hashes)} document hashes for {self.entity_id} from entity directory")
+            logger.debug(
+                f"Loaded {len(self.document_hashes)} document hashes for {self.entity_id} from entity directory"
+            )
         except Exception as e:
             logger.error(f"Failed to load metadata for {self.entity_id}: {e}")
 
-    def add_document(self, file: File, metadata: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    def add_document(
+        self, file: File, metadata: Optional[Dict[str, Any]] = None
+    ) -> Optional[Dict[str, Any]]:
         """
         Add a document to this entity's vector store
 
@@ -172,27 +176,37 @@ class EntityVectorStore:
                 # First check in-memory cache
                 if content_hash in self.document_hashes:
                     existing_doc_id = self.document_hashes[content_hash]
-                    logger.info(f"Document already exists for entity {self.entity_id}: {existing_doc_id}")
+                    logger.info(
+                        f"Document already exists for entity {self.entity_id}: {existing_doc_id}"
+                    )
                     return {
                         "doc_id": existing_doc_id,
                         "entity_id": self.entity_id,
-                        "is_duplicate": True
+                        "is_duplicate": True,
                     }
 
                 # Also check in entity storage directly (for race condition safety)
                 try:
                     entity_storage = JSONStorage(str(self.entity_dir))
                     # Only find non-deleted documents (exclude [DELETED] prefixed docs)
-                    existing_doc = entity_storage.find_one("documents", {"content_hash": content_hash, "_id": {"$not": {"$regex": "^\\[DELETED\\]"}}})
+                    existing_doc = entity_storage.find_one(
+                        "documents",
+                        {
+                            "content_hash": content_hash,
+                            "_id": {"$not": {"$regex": "^\\[DELETED\\]"}},
+                        },
+                    )
                     if existing_doc:
                         existing_doc_id = existing_doc.get("_id")
                         # Update cache
                         self.document_hashes[content_hash] = existing_doc_id
-                        logger.info(f"Document already exists for entity {self.entity_id}: {existing_doc_id} (found in storage)")
+                        logger.info(
+                            f"Document already exists for entity {self.entity_id}: {existing_doc_id} (found in storage)"
+                        )
                         return {
                             "doc_id": existing_doc_id,
                             "entity_id": self.entity_id,
-                            "is_duplicate": True
+                            "is_duplicate": True,
                         }
                 except Exception as e:
                     logger.debug(f"Could not check entity storage for duplicates: {e}")
@@ -203,7 +217,7 @@ class EntityVectorStore:
             if not chunks:
                 return None
 
-            doc_id = chunks[0]['metadata']['doc_id']
+            doc_id = chunks[0]["metadata"]["doc_id"]
 
             # Only lock for vector store updates (critical section)
             with self._lock:
@@ -212,26 +226,36 @@ class EntityVectorStore:
                     # Check cache first
                     if content_hash in self.document_hashes:
                         existing_doc_id = self.document_hashes[content_hash]
-                        logger.info(f"Document already exists (race condition detected): {existing_doc_id}")
+                        logger.info(
+                            f"Document already exists (race condition detected): {existing_doc_id}"
+                        )
                         return {
                             "doc_id": existing_doc_id,
                             "entity_id": self.entity_id,
-                            "is_duplicate": True
+                            "is_duplicate": True,
                         }
 
                     # Check storage again for safety
                     try:
                         entity_storage = JSONStorage(str(self.entity_dir))
                         # Only find non-deleted documents (exclude [DELETED] prefixed docs)
-                        existing_docs = entity_storage.find("documents", {"content_hash": content_hash, "_id": {"$not": {"$regex": "^\\[DELETED\\]"}}})
+                        existing_docs = entity_storage.find(
+                            "documents",
+                            {
+                                "content_hash": content_hash,
+                                "_id": {"$not": {"$regex": "^\\[DELETED\\]"}},
+                            },
+                        )
                         if existing_docs:
                             existing_doc_id = existing_docs[0].get("_id")
                             self.document_hashes[content_hash] = existing_doc_id
-                            logger.info(f"Document already exists (race condition detected in storage): {existing_doc_id}")
+                            logger.info(
+                                f"Document already exists (race condition detected in storage): {existing_doc_id}"
+                            )
                             return {
                                 "doc_id": existing_doc_id,
                                 "entity_id": self.entity_id,
-                                "is_duplicate": True
+                                "is_duplicate": True,
                             }
                     except Exception as e:
                         logger.debug(f"Could not verify duplicates in storage during lock: {e}")
@@ -247,7 +271,9 @@ class EntityVectorStore:
                 self._save_vector_store()
 
             # Save metadata and chunks to storage outside of lock (uses its own locks)
-            self._save_document_metadata(doc_id, file, content_hash, metadata, chunks, all_services_used)
+            self._save_document_metadata(
+                doc_id, file, content_hash, metadata, chunks, all_services_used
+            )
 
             logger.info(f"Added document {doc_id} to entity {self.entity_id}")
 
@@ -260,7 +286,7 @@ class EntityVectorStore:
                 "chunks_count": len(chunks),
                 "is_duplicate": False,
                 "services_used": [service.to_dict() for service in all_services_used],
-                "estimated_cost_usd": round(total_cost_usd, 6)
+                "estimated_cost_usd": round(total_cost_usd, 6),
             }
 
         except Exception as e:
@@ -270,7 +296,7 @@ class EntityVectorStore:
     def _calculate_file_hash_from_file_path(self, file_path: str) -> Optional[str]:
         """Calculate SHA-256 hash of file content"""
         try:
-            with open(file_path, 'rb') as f:
+            with open(file_path, "rb") as f:
                 return hashlib.sha256(f.read()).hexdigest()
         except Exception as e:
             logger.error(f"Failed to calculate hash: {e}")
@@ -284,8 +310,9 @@ class EntityVectorStore:
             logger.error(f"Failed to calculate hash: {e}")
             return None
 
-    def add_chunk(self, chunk_text: str, chunk_id: str, doc_id: str,
-                  metadata: Optional[Dict[str, Any]] = None) -> bool:
+    def add_chunk(
+        self, chunk_text: str, chunk_id: str, doc_id: str, metadata: Optional[Dict[str, Any]] = None
+    ) -> bool:
         """
         Add a single pre-chunked item directly to the vector store
 
@@ -302,11 +329,7 @@ class EntityVectorStore:
             # Format the chunk for vector store
             chunk_dict = {
                 "chunk": {"text": chunk_text},
-                "metadata": {
-                    "chunk_id": chunk_id,
-                    "doc_id": doc_id,
-                    **(metadata or {})
-                }
+                "metadata": {"chunk_id": chunk_id, "doc_id": doc_id, **(metadata or {})},
             }
 
             # Add to vector store using existing method
@@ -318,8 +341,9 @@ class EntityVectorStore:
             logger.error(f"Error adding chunk {chunk_id}: {e}")
             return False
 
-    def add_chunks_batch(self, chunks: List[Dict[str, Any]], doc_id: str,
-                        new_chunks_data: List[Dict[str, Any]]) -> bool:
+    def add_chunks_batch(
+        self, chunks: List[Dict[str, Any]], doc_id: str, new_chunks_data: List[Dict[str, Any]]
+    ) -> bool:
         """
         Add multiple pre-chunked items to the vector store with full metadata persistence
 
@@ -345,7 +369,9 @@ class EntityVectorStore:
             # Save document and chunk metadata to storage (outside lock to avoid deadlock)
             self._save_chunks_metadata(doc_id, chunks)
 
-            logger.info(f"Successfully added {len(chunks)} chunks to vector store and saved metadata")
+            logger.info(
+                f"Successfully added {len(chunks)} chunks to vector store and saved metadata"
+            )
             return True
 
         except Exception as e:
@@ -370,42 +396,47 @@ class EntityVectorStore:
             for chunk in chunks:
                 chunk_id = chunk.get("metadata", {}).get("chunk_id")
                 if chunk_id:
-                    chunk_doc = {
-                        "_id": chunk_id,
-                        "entity_id": self.entity_id,
-                        **chunk
-                    }
+                    chunk_doc = {"_id": chunk_id, "entity_id": self.entity_id, **chunk}
                     entity_storage.update_one(
-                        "chunks",
-                        {"_id": chunk_id},
-                        {"$set": chunk_doc},
-                        upsert=True
+                        "chunks", {"_id": chunk_id}, {"$set": chunk_doc}, upsert=True
                     )
 
-            logger.debug(f"Saved {len(chunks)} chunks metadata for doc {doc_id} to entity directory {self.entity_dir}")
+            logger.debug(
+                f"Saved {len(chunks)} chunks metadata for doc {doc_id} to entity directory {self.entity_dir}"
+            )
 
         except Exception as e:
             logger.error(f"Failed to save chunks metadata: {e}")
 
-    def _process_document(self, file: File, metadata: Optional[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[Service]]:
+    def _process_document(
+        self, file: File, metadata: Optional[Dict[str, Any]]
+    ) -> Tuple[List[Dict[str, Any]], List[Service]]:
         """Process document into chunks"""
         all_services_used: List[Service] = []
         try:
             # Extract source from metadata, fallback to file_path
-            source = metadata.get('source', file.filename) if metadata else file.filename
-            
+            source = metadata.get("source", file.filename) if metadata else file.filename
+
             file_processing_client = FileProcessorClient()
-            response = file_processing_client.chunk_file_from_bytes(file.content, file.filename, source)
+            response = file_processing_client.chunk_file_from_bytes(
+                file.content, file.filename, source
+            )
 
             task_id = response.get("task_id")
             if not response.get("results", {}).values():
                 raise Exception("File processing failed")
             chunks = list(response.get("results", {}).values())[0]
-            all_services_used.append(Service(
-                service_type=ServiceType.FILE_PROCESSOR,
-                breakdown=list(response.get("metrics", {}).values())[0] if response.get("metrics", {}).values() else {},
-                estimated_cost_usd=response.get("estimated_cost_usd", 0)
-            ))
+            all_services_used.append(
+                Service(
+                    service_type=ServiceType.FILE_PROCESSOR,
+                    breakdown=(
+                        list(response.get("metrics", {}).values())[0]
+                        if response.get("metrics", {}).values()
+                        else {}
+                    ),
+                    estimated_cost_usd=response.get("estimated_cost_usd", 0),
+                )
+            )
 
             # Generate document ID
             doc_id = f"doc_{str(uuid4())[:13]}"
@@ -418,7 +449,7 @@ class EntityVectorStore:
                 "source": source,
                 "file_type": Path(file.filename).suffix.lower(),
                 "indexed_at": datetime.now(timezone.utc),
-                "file_processor_task_id": task_id
+                "file_processor_task_id": task_id,
             }
 
             if metadata:
@@ -429,13 +460,13 @@ class EntityVectorStore:
             for chunk in chunks:
                 # API chunks format: {content, chunk_order_index, source, metadata}
                 formatted_chunk: Dict[str, Dict[str, Any]] = {
-                    'chunk': chunk.get("content", {}),
-                    'metadata': doc_metadata.copy()
+                    "chunk": chunk.get("content", {}),
+                    "metadata": doc_metadata.copy(),
                 }
 
                 # Merge any existing metadata from API
-                if 'metadata' in chunk:
-                    formatted_chunk['metadata'].update(chunk['metadata'])
+                if "metadata" in chunk:
+                    formatted_chunk["metadata"].update(chunk["metadata"])
 
                 formatted_chunks.append(formatted_chunk)
 
@@ -444,13 +475,14 @@ class EntityVectorStore:
         except Exception as e:
             logger.error(f"Error processing document {file.filename}: {e}")
             import traceback
+
             traceback.print_exc()
             return [], all_services_used
 
     def _simple_chunk_file(self, file_path: str) -> List[Dict[str, Any]]:
         """Simple fallback chunking when API is not available"""
         try:
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
                 content = f.read()
 
             # Simple chunking - split by size
@@ -458,17 +490,21 @@ class EntityVectorStore:
             chunks = []
 
             for i in range(0, len(content), chunk_size):
-                chunk_content = content[i:i + chunk_size]
-                chunks.append({
-                    'content': chunk_content,
-                    'chunk_order_index': len(chunks),
-                    'source': file_path,
-                    'metadata': {
-                        'tokens': len(chunk_content.split())
+                chunk_content = content[i : i + chunk_size]
+                chunks.append(
+                    {
+                        "content": chunk_content,
+                        "chunk_order_index": len(chunks),
+                        "source": file_path,
+                        "metadata": {"tokens": len(chunk_content.split())},
                     }
-                })
+                )
 
-            return chunks if chunks else [{'content': content, 'chunk_order_index': 0, 'source': file_path}]
+            return (
+                chunks
+                if chunks
+                else [{"content": content, "chunk_order_index": 0, "source": file_path}]
+            )
 
         except Exception as e:
             logger.error(f"Simple chunking failed: {e}")
@@ -491,11 +527,8 @@ class EntityVectorStore:
         try:
             documents = [
                 Document(
-                    page_content=json.dumps(chunk['chunk'], indent=1),
-                    metadata={
-                        'metadata': chunk.get("metadata"),
-                        'chunk': chunk.get('chunk')
-                    }
+                    page_content=json.dumps(chunk["chunk"], indent=1),
+                    metadata={"metadata": chunk.get("metadata"), "chunk": chunk.get("chunk")},
                 )
                 for chunk in chunks
             ]
@@ -536,9 +569,9 @@ class EntityVectorStore:
                     "processing_time_seconds": round(elapsed_time, 4),
                     "embeddings_model": Config.EMBEDDINGS_MODEL,
                     "is_local_model": True,
-                    "gpu_accelerated": True
+                    "gpu_accelerated": True,
                 },
-                estimated_cost_usd=round(estimated_cost, 6)
+                estimated_cost_usd=round(estimated_cost, 6),
             )
 
             all_services_used.append(embedding_service)
@@ -557,19 +590,25 @@ class EntityVectorStore:
         """Update chunk metadata indices"""
         for i, chunk in enumerate(chunks):
             chunk_idx = start_idx + i
-            metadata = chunk['metadata']
+            metadata = chunk["metadata"]
 
             self.chunk_metadata[chunk_idx] = metadata
 
-            doc_id = metadata.get('doc_id')
+            doc_id = metadata.get("doc_id")
             if doc_id:
                 if doc_id not in self.doc_to_chunks:
                     self.doc_to_chunks[doc_id] = set()
                 self.doc_to_chunks[doc_id].add(chunk_idx)
 
-    def _save_document_metadata(self, doc_id: str, file: File, content_hash: Optional[str],
-                                metadata: Optional[Dict[str, Any]], chunks: List[Dict[str, Any]],
-                                services_used: Optional[List[Service]] = None):
+    def _save_document_metadata(
+        self,
+        doc_id: str,
+        file: File,
+        content_hash: Optional[str],
+        metadata: Optional[Dict[str, Any]],
+        chunks: List[Dict[str, Any]],
+        services_used: Optional[List[Service]] = None,
+    ):
         """Save document metadata and chunks to storage (JSON storage in entity directory)"""
         try:
             # Use entity-specific JSON storage
@@ -583,7 +622,7 @@ class EntityVectorStore:
                 "file_size": len(file.content) if file.content else 0,
                 "indexed_at": datetime.now(timezone.utc),
                 "estimated_cost_usd": round(total_cost_usd, 6),
-                "services_used": [service.to_dict() for service in (services_used or [])]
+                "services_used": [service.to_dict() for service in (services_used or [])],
             }
 
             if content_hash:
@@ -597,32 +636,32 @@ class EntityVectorStore:
             mapping_data["_id"] = doc_id
             mapping_data["doc_id"] = doc_id
             entity_storage.update_one(
-                "documents",
-                {"_id": doc_id},
-                {"$set": mapping_data},
-                upsert=True
+                "documents", {"_id": doc_id}, {"$set": mapping_data}, upsert=True
             )
 
             # Save chunks to entity-specific storage (chunks collection)
             for chunk in chunks:
-                chunk_id = f"chunk_{chunk['metadata']['doc_id']}_{chunk['chunk']['chunk_order_index']}"
+                chunk_id = (
+                    f"chunk_{chunk['metadata']['doc_id']}_{chunk['chunk']['chunk_order_index']}"
+                )
                 # Prepare chunk document
                 chunk_doc = {key: value for key, value in chunk.items() if key != "_id"}
-                chunk_doc['entity_id'] = self.entity_id
+                chunk_doc["entity_id"] = self.entity_id
 
                 entity_storage.update_one(
-                    "chunks",
-                    {"_id": chunk_id},
-                    {"$set": chunk_doc},
-                    upsert=True
+                    "chunks", {"_id": chunk_id}, {"$set": chunk_doc}, upsert=True
                 )
 
-            logger.debug(f"Saved document {doc_id} with {len(chunks)} chunks to entity directory {self.entity_dir}")
+            logger.debug(
+                f"Saved document {doc_id} with {len(chunks)} chunks to entity directory {self.entity_dir}"
+            )
 
         except Exception as e:
             logger.error(f"Failed to save document metadata: {e}")
 
-    def search(self, query: str, k: int = 5, doc_ids: Optional[List[str]] = None) -> Tuple[List[Document], List[Service]]:
+    def search(
+        self, query: str, k: int = 5, doc_ids: Optional[List[str]] = None
+    ) -> Tuple[List[Document], List[Service]]:
         """
         Search within this entity's vector store with service tracking
 
@@ -650,16 +689,18 @@ class EntityVectorStore:
 
                 # Transformer cost: $0.02 per 1M tokens
                 embedding_cost = (query_tokens / 1_000_000) * 0.02
-                services_used = [Service(
-                    ServiceType.TRANSFORMER,
-                    {
-                        "operation": "query_embedding",
-                        "model": Config.EMBEDDINGS_MODEL,
-                        "query_tokens": query_tokens,
-                        "is_local_model": True
-                    },
-                    embedding_cost
-                )]
+                services_used = [
+                    Service(
+                        ServiceType.TRANSFORMER,
+                        {
+                            "operation": "query_embedding",
+                            "model": Config.EMBEDDINGS_MODEL,
+                            "query_tokens": query_tokens,
+                            "is_local_model": True,
+                        },
+                        embedding_cost,
+                    )
+                ]
 
                 if doc_ids:
                     # Filter by document IDs
@@ -686,11 +727,11 @@ class EntityVectorStore:
             return []
 
         # Filter search results
-        all_results = self.vector_store.similarity_search(query, k=k*3)  # Get more to filter
+        all_results = self.vector_store.similarity_search(query, k=k * 3)  # Get more to filter
         filtered_results = []
 
         for doc in all_results:
-            doc_id = doc.metadata.get('metadata', {}).get('doc_id')
+            doc_id = doc.metadata.get("metadata", {}).get("doc_id")
             if doc_id in doc_ids:
                 filtered_results.append(doc)
                 if len(filtered_results) >= k:
@@ -735,8 +776,10 @@ class EntityVectorStore:
                 if doc_id in self.doc_to_chunks:
                     del self.doc_to_chunks[doc_id]
 
-                logger.info(f"Deleted {deleted_chunk_count} chunks for document {doc_id} from vector store "
-                           f"(removed {len(chunk_indices) if doc_id in self.doc_to_chunks or not self.vector_store else 0} FAISS indices)")
+                logger.info(
+                    f"Deleted {deleted_chunk_count} chunks for document {doc_id} from vector store "
+                    f"(removed {len(chunk_indices) if doc_id in self.doc_to_chunks or not self.vector_store else 0} FAISS indices)"
+                )
                 return True
 
             except Exception as e:
@@ -766,11 +809,8 @@ class EntityVectorStore:
             if all_chunks:
                 documents = [
                     Document(
-                        page_content=json.dumps(chunk.get('chunk', {}), indent=1),
-                        metadata={
-                            'metadata': chunk.get("metadata"),
-                            'chunk': chunk.get('chunk')
-                        }
+                        page_content=json.dumps(chunk.get("chunk", {}), indent=1),
+                        metadata={"metadata": chunk.get("metadata"), "chunk": chunk.get("chunk")},
                     )
                     for chunk in all_chunks
                 ]
@@ -780,7 +820,9 @@ class EntityVectorStore:
             else:
                 self.vector_store = None
 
-            logger.info(f"Rebuilt vector store for entity {self.entity_id} with {len(all_chunks)} chunks")
+            logger.info(
+                f"Rebuilt vector store for entity {self.entity_id} with {len(all_chunks)} chunks"
+            )
 
         except Exception as e:
             logger.error(f"Failed to rebuild vector store: {e}")
@@ -840,7 +882,9 @@ class EntityVectorStore:
         """
         return self.get_chunk_by_id(doc_id, current_chunk_index + 1)
 
-    def get_chunk_context(self, doc_id: str, chunk_order_index: int, context_size: int = 1) -> Dict[str, Any]:
+    def get_chunk_context(
+        self, doc_id: str, chunk_order_index: int, context_size: int = 1
+    ) -> Dict[str, Any]:
         """
         Get a chunk with surrounding context chunks
 
@@ -869,11 +913,7 @@ class EntityVectorStore:
             if next_chunk:
                 after_chunks.append(next_chunk)
 
-        return {
-            "current": current,
-            "before": before_chunks,
-            "after": after_chunks
-        }
+        return {"current": current, "before": before_chunks, "after": after_chunks}
 
     def get_document_chunks_in_order(self, doc_id: str) -> List[Dict[str, Any]]:
         """
@@ -888,17 +928,19 @@ class EntityVectorStore:
         try:
             # Use entity-scoped storage
             entity_storage = JSONStorage(str(self.entity_dir))
-            chunks = list(entity_storage.find("chunks",
-                {"metadata.doc_id": doc_id}
-            ))
+            chunks = list(entity_storage.find("chunks", {"metadata.doc_id": doc_id}))
 
-            logger.debug(f"Retrieved {len(chunks)} chunks for document {doc_id} from entity {self.entity_id}")
+            logger.debug(
+                f"Retrieved {len(chunks)} chunks for document {doc_id} from entity {self.entity_id}"
+            )
             return chunks
         except Exception as e:
             logger.error(f"Failed to get chunks for document {doc_id}: {e}")
             return []
 
-    def get_chunk_neighbors(self, doc_id: str, chunk_order_index: int, window_size: int = 2) -> List[Dict[str, Any]]:
+    def get_chunk_neighbors(
+        self, doc_id: str, chunk_order_index: int, window_size: int = 2
+    ) -> List[Dict[str, Any]]:
         """
         Get neighboring chunks within a window around the target chunk
 
@@ -920,7 +962,7 @@ class EntityVectorStore:
                 chunks.append(chunk)
 
         return chunks
-    
+
     def get_entity_documents(self) -> List[Dict[str, Any]]:
         """Get all documents associated with an entity"""
         logger.debug(f"Getting documents for entity: {self.entity_id}")
@@ -930,9 +972,7 @@ class EntityVectorStore:
             entity_storage = JSONStorage(str(self.entity_dir))
 
             # Get all documents from entity-scoped storage (excluding deleted ones)
-            docs = entity_storage.find("documents",
-                {"_id": {"$not": {"$regex": "^\\[DELETED\\]"}}}
-            )
+            docs = entity_storage.find("documents", {"_id": {"$not": {"$regex": "^\\[DELETED\\]"}}})
 
             # Ensure each document has doc_id field for API and agent compatibility
             # If doc_id is missing, use _id as fallback
@@ -954,7 +994,7 @@ class EntityVectorStore:
                 "entity_id": self.entity_id,
                 "total_documents": len(self.doc_to_chunks),
                 "total_chunks": len(self.chunk_metadata),
-                "has_vector_store": self.vector_store is not None
+                "has_vector_store": self.vector_store is not None,
             }
 
 
@@ -969,9 +1009,7 @@ class EntityRAGManager:
         logger.info("Initializing EntityRAGManager")
 
         # Shared embeddings model (thread-safe)
-        self.embeddings = HuggingFaceEmbeddings(
-            model_name=Config.EMBEDDINGS_MODEL
-        )
+        self.embeddings = HuggingFaceEmbeddings(model_name=Config.EMBEDDINGS_MODEL)
 
         # Storage path
         self.storage_path = os.path.join(Config.DATA_DIR, "entity_scoped")
@@ -986,7 +1024,9 @@ class EntityRAGManager:
 
         logger.info("EntityRAGManager initialized successfully")
 
-    def get_entity_store(self, entity_id: str, entity_dir: Optional[str] = None) -> EntityVectorStore:
+    def get_entity_store(
+        self, entity_id: str, entity_dir: Optional[str] = None
+    ) -> EntityVectorStore:
         """
         Get or create an entity-scoped vector store
 
@@ -1002,9 +1042,7 @@ class EntityRAGManager:
                 # Use provided entity_dir if available, otherwise use default storage path
                 storage_path = entity_dir if entity_dir else self.storage_path
                 self._entity_stores[entity_id] = EntityVectorStore(
-                    entity_id=entity_id,
-                    embeddings=self.embeddings,
-                    storage_path=storage_path
+                    entity_id=entity_id, embeddings=self.embeddings, storage_path=storage_path
                 )
             else:
                 # If entity already cached but entity_dir was provided and is different,
@@ -1012,14 +1050,20 @@ class EntityRAGManager:
                 # This handles cases where the same entity is accessed with different directories
                 existing_store = self._entity_stores[entity_id]
                 if entity_dir and str(entity_dir) != str(existing_store.entity_dir):
-                    logger.warning(f"Entity {entity_id} already cached with different directory. "
-                                   f"Existing: {existing_store.entity_dir}, New: {entity_dir}. "
-                                   f"Using existing cache.")
+                    logger.warning(
+                        f"Entity {entity_id} already cached with different directory. "
+                        f"Existing: {existing_store.entity_dir}, New: {entity_dir}. "
+                        f"Using existing cache."
+                    )
             return self._entity_stores[entity_id]
 
-    def add_document(self, entity_id: str, file: File,
-                    metadata: Optional[Dict[str, Any]] = None,
-                    entity_dir: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    def add_document(
+        self,
+        entity_id: str,
+        file: File,
+        metadata: Optional[Dict[str, Any]] = None,
+        entity_dir: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
         """
         Add a document to an entity's vector store
 
@@ -1035,9 +1079,15 @@ class EntityRAGManager:
         store = self.get_entity_store(entity_id, entity_dir)
         return store.add_document(file, metadata)
 
-    def add_chunk(self, entity_id: str, chunk_text: str, chunk_id: str, doc_id: str,
-                  metadata: Optional[Dict[str, Any]] = None,
-                  entity_dir: Optional[str] = None) -> bool:
+    def add_chunk(
+        self,
+        entity_id: str,
+        chunk_text: str,
+        chunk_id: str,
+        doc_id: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        entity_dir: Optional[str] = None,
+    ) -> bool:
         """
         Add a single pre-chunked item directly to an entity's vector store
 
@@ -1055,9 +1105,14 @@ class EntityRAGManager:
         store = self.get_entity_store(entity_id, entity_dir)
         return store.add_chunk(chunk_text, chunk_id, doc_id, metadata)
 
-    def add_chunks_batch(self, entity_id: str, chunks: List[Dict[str, Any]], doc_id: str,
-                        entity_dir: Optional[str] = None,
-                        new_chunks_data: Optional[List[Dict[str, Any]]] = None) -> bool:
+    def add_chunks_batch(
+        self,
+        entity_id: str,
+        chunks: List[Dict[str, Any]],
+        doc_id: str,
+        entity_dir: Optional[str] = None,
+        new_chunks_data: Optional[List[Dict[str, Any]]] = None,
+    ) -> bool:
         """
         Add multiple pre-chunked items to an entity's vector store with full metadata persistence
 
@@ -1074,8 +1129,9 @@ class EntityRAGManager:
         store = self.get_entity_store(entity_id, entity_dir)
         return store.add_chunks_batch(chunks, doc_id, new_chunks_data or [])
 
-    def add_documents_parallel(self, entity_documents: Dict[str, List[str]],
-                              metadata: Optional[Dict[str, Any]] = None) -> Dict[str, List[Dict[str, Any]]]:
+    def add_documents_parallel(
+        self, entity_documents: Dict[str, List[str]], metadata: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, List[Dict[str, Any]]]:
         """
         Add documents to multiple entities in parallel
 
@@ -1093,12 +1149,7 @@ class EntityRAGManager:
         for entity_id, file_paths in entity_documents.items():
             entity_futures = []
             for file_path in file_paths:
-                future = self._thread_pool.submit(
-                    self.add_document,
-                    entity_id,
-                    file_path,
-                    metadata
-                )
+                future = self._thread_pool.submit(self.add_document, entity_id, file_path, metadata)
                 entity_futures.append((file_path, future))
             futures[entity_id] = entity_futures
 
@@ -1115,8 +1166,14 @@ class EntityRAGManager:
 
         return results
 
-    def search(self, entity_id: str, query: str, k: int = 5,
-              doc_ids: Optional[List[str]] = None, entity_dir: Optional[str] = None) -> List[Document]:
+    def search(
+        self,
+        entity_id: str,
+        query: str,
+        k: int = 5,
+        doc_ids: Optional[List[str]] = None,
+        entity_dir: Optional[str] = None,
+    ) -> List[Document]:
         """
         Search within a specific entity's documents
 
@@ -1133,8 +1190,9 @@ class EntityRAGManager:
         store = self.get_entity_store(entity_id, entity_dir)
         return store.search(query, k, doc_ids)
 
-    def search_multiple_entities(self, entity_ids: List[str], query: str,
-                                 k: int = 5) -> Dict[str, List[Document]]:
+    def search_multiple_entities(
+        self, entity_ids: List[str], query: str, k: int = 5
+    ) -> Dict[str, List[Document]]:
         """
         Search across multiple entities in parallel
 
@@ -1151,12 +1209,7 @@ class EntityRAGManager:
 
         # Submit all search tasks
         for entity_id in entity_ids:
-            future = self._thread_pool.submit(
-                self.search,
-                entity_id,
-                query,
-                k
-            )
+            future = self._thread_pool.submit(self.search, entity_id, query, k)
             futures[entity_id] = future
 
         # Collect results
@@ -1169,7 +1222,9 @@ class EntityRAGManager:
 
         return results
 
-    def delete_document(self, entity_id: str, doc_id: str, entity_dir: Optional[str] = None) -> bool:
+    def delete_document(
+        self, entity_id: str, doc_id: str, entity_dir: Optional[str] = None
+    ) -> bool:
         """Delete a document from an entity's store
 
         Args:
@@ -1196,7 +1251,9 @@ class EntityRAGManager:
         store = self.get_entity_store(entity_id, entity_dir)
         return store.get_stats()
 
-    def get_chunk_by_id(self, entity_id: str, doc_id: str, chunk_order_index: int, entity_dir: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    def get_chunk_by_id(
+        self, entity_id: str, doc_id: str, chunk_order_index: int, entity_dir: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
         """
         Get a specific chunk by ID for an entity
 
@@ -1212,7 +1269,13 @@ class EntityRAGManager:
         store = self.get_entity_store(entity_id, entity_dir)
         return store.get_chunk_by_id(doc_id, chunk_order_index)
 
-    def get_previous_chunk(self, entity_id: str, doc_id: str, current_chunk_index: int, entity_dir: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    def get_previous_chunk(
+        self,
+        entity_id: str,
+        doc_id: str,
+        current_chunk_index: int,
+        entity_dir: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
         """
         Get the previous chunk for an entity
 
@@ -1228,7 +1291,13 @@ class EntityRAGManager:
         store = self.get_entity_store(entity_id, entity_dir)
         return store.get_previous_chunk(doc_id, current_chunk_index)
 
-    def get_next_chunk(self, entity_id: str, doc_id: str, current_chunk_index: int, entity_dir: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    def get_next_chunk(
+        self,
+        entity_id: str,
+        doc_id: str,
+        current_chunk_index: int,
+        entity_dir: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
         """
         Get the next chunk for an entity
 
@@ -1244,8 +1313,14 @@ class EntityRAGManager:
         store = self.get_entity_store(entity_id, entity_dir)
         return store.get_next_chunk(doc_id, current_chunk_index)
 
-    def get_chunk_context(self, entity_id: str, doc_id: str, chunk_order_index: int,
-                         context_size: int = 1, entity_dir: Optional[str] = None) -> Dict[str, Any]:
+    def get_chunk_context(
+        self,
+        entity_id: str,
+        doc_id: str,
+        chunk_order_index: int,
+        context_size: int = 1,
+        entity_dir: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         Get chunk with context for an entity
 
@@ -1262,7 +1337,9 @@ class EntityRAGManager:
         store = self.get_entity_store(entity_id, entity_dir)
         return store.get_chunk_context(doc_id, chunk_order_index, context_size)
 
-    def get_document_chunks_in_order(self, entity_id: str, doc_id: str, entity_dir: Optional[str] = None) -> List[Dict[str, Any]]:
+    def get_document_chunks_in_order(
+        self, entity_id: str, doc_id: str, entity_dir: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """
         Get all chunks for a document in order for an entity
 
@@ -1277,8 +1354,14 @@ class EntityRAGManager:
         store = self.get_entity_store(entity_id, entity_dir)
         return store.get_document_chunks_in_order(doc_id)
 
-    def get_chunk_neighbors(self, entity_id: str, doc_id: str, chunk_order_index: int,
-                           window_size: int = 2, entity_dir: Optional[str] = None) -> List[Dict[str, Any]]:
+    def get_chunk_neighbors(
+        self,
+        entity_id: str,
+        doc_id: str,
+        chunk_order_index: int,
+        window_size: int = 2,
+        entity_dir: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         """
         Get neighboring chunks for an entity
 
@@ -1299,8 +1382,7 @@ class EntityRAGManager:
         """Get statistics for all entities"""
         with self._stores_lock:
             return {
-                entity_id: store.get_stats()
-                for entity_id, store in self._entity_stores.items()
+                entity_id: store.get_stats() for entity_id, store in self._entity_stores.items()
             }
 
     def cleanup_entity(self, entity_id: str):
@@ -1332,9 +1414,13 @@ def get_entity_rag_manager() -> EntityRAGManager:
 
     return _entity_rag_manager
 
-def index_document_entity_scoped(entity_id: str, file: File,
-                                metadata: Optional[Dict[str, Any]] = None,
-                                entity_dir: Optional[str] = None) -> Optional[Dict[str, Any]]:
+
+def index_document_entity_scoped(
+    entity_id: str,
+    file: File,
+    metadata: Optional[Dict[str, Any]] = None,
+    entity_dir: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
     """
     Index a document to an entity-scoped vector store (faster, isolated access)
 
@@ -1354,6 +1440,7 @@ def index_document_entity_scoped(entity_id: str, file: File,
     except Exception as e:
         logger.error(f"Failed to index document for entity {entity_id}: {e}")
         return None
+
 
 @contextmanager
 def entity_rag_context():

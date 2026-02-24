@@ -8,14 +8,16 @@ from typing import Optional, List, Dict, Any, Tuple
 from pathlib import Path
 from dataclasses import dataclass
 
+
 @dataclass
 class File:
     filename: str
     content: bytes
 
+
 class RAGClient:
     """Simple client for Entity-Scoped RAG API"""
-    
+
     def __init__(self, base_url: str = "http://localhost:8002", poll_interval: float = 2.0):
         """
         Initialize RAG client
@@ -24,14 +26,18 @@ class RAGClient:
             base_url: Base URL of the API server
             poll_interval: How often to poll for task status in seconds (default: 2.0)
         """
-        self.base_url = base_url.rstrip('/')
+        self.base_url = base_url.rstrip("/")
         self.session = requests.Session()
         self.poll_interval = poll_interval
-    
+
     # Entity Management
-    def create_entity(self, entity_id: str, entity_name: str, 
-                     description: Optional[str] = None, 
-                     metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def create_entity(
+        self,
+        entity_id: str,
+        entity_name: str,
+        description: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """Create a new entity"""
         response = self.session.post(
             f"{self.base_url}/api/entities",
@@ -39,37 +45,37 @@ class RAGClient:
                 "entity_id": entity_id,
                 "entity_name": entity_name,
                 "description": description,
-                "metadata": metadata
-            }
+                "metadata": metadata,
+            },
         )
         response.raise_for_status()
         return response.json()
-    
+
     def get_entity(self, entity_id: str) -> Dict[str, Any]:
         """Get entity details"""
         response = self.session.get(f"{self.base_url}/api/entities/{entity_id}")
         response.raise_for_status()
         return response.json()
-    
+
     def list_entities(self) -> List[Dict[str, Any]]:
         """List all entities"""
         response = self.session.get(f"{self.base_url}/api/entities")
         response.raise_for_status()
         return response.json()["entities"]
-    
+
     def delete_entity(self, entity_id: str) -> Dict[str, Any]:
         """Delete an entity"""
         response = self.session.delete(f"{self.base_url}/api/entities/{entity_id}")
         response.raise_for_status()
         return response.json()
-    
+
     # File Management
     def upload_file_async(
         self,
         entity_id: str,
         file_path: str,
         description: Optional[str] = None,
-        source: Optional[str] = None
+        source: Optional[str] = None,
     ) -> str:
         """
         Upload a file asynchronously (returns task_id immediately).
@@ -92,23 +98,21 @@ class RAGClient:
         if not file_path_obj.exists():
             raise FileNotFoundError(f"File not found: {file_path}")
 
-        with open(file_path_obj, 'rb') as f:
-            files = {'file': (file_path_obj.name, f.read())}
+        with open(file_path_obj, "rb") as f:
+            files = {"file": (file_path_obj.name, f.read())}
             data: Dict[str, Any] = {}
             if description:
-                data['description'] = description
+                data["description"] = description
             if source:
-                data['source'] = source
+                data["source"] = source
 
             response = self.session.post(
-                f"{self.base_url}/api/entities/{entity_id}/files",
-                files=files,
-                data=data
+                f"{self.base_url}/api/entities/{entity_id}/files", files=files, data=data
             )
 
         response.raise_for_status()
         result = response.json()
-        return result['task_id']
+        return result["task_id"]
 
     def upload_file(
         self,
@@ -117,7 +121,7 @@ class RAGClient:
         description: Optional[str] = None,
         source: Optional[str] = None,
         wait: bool = True,
-        poll_interval: Optional[float] = None
+        poll_interval: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
         Upload a file to an entity.
@@ -146,10 +150,7 @@ class RAGClient:
         task_id = self.upload_file_async(entity_id, file_path, description, source)
 
         if not wait:
-            return {
-                "task_id": task_id,
-                "status_url": f"/tasks/{task_id}"
-            }
+            return {"task_id": task_id, "status_url": f"/tasks/{task_id}"}
 
         return self.wait_for_upload(task_id, poll_interval=poll_interval)
 
@@ -161,7 +162,7 @@ class RAGClient:
         description: Optional[str] = None,
         source: Optional[str] = None,
         wait: bool = True,
-        poll_interval: Optional[float] = None
+        poll_interval: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
         Upload file content from bytes (useful when you already have file in memory).
@@ -187,35 +188,28 @@ class RAGClient:
             ...     content = f.read()
             >>> result = client.upload_file_from_bytes("entity_123", content, 'document.pdf')
         """
-        files = {'file': (filename, file_content)}
+        files = {"file": (filename, file_content)}
         data: Dict[str, Any] = {}
         if description:
-            data['description'] = description
+            data["description"] = description
         if source:
-            data['source'] = source
+            data["source"] = source
 
         response = self.session.post(
-            f"{self.base_url}/api/entities/{entity_id}/files",
-            files=files,
-            data=data
+            f"{self.base_url}/api/entities/{entity_id}/files", files=files, data=data
         )
 
         response.raise_for_status()
         result = response.json()
-        task_id = result['task_id']
+        task_id = result["task_id"]
 
         if not wait:
-            return {
-                "task_id": task_id,
-                "status_url": f"/tasks/{task_id}"
-            }
+            return {"task_id": task_id, "status_url": f"/tasks/{task_id}"}
 
         return self.wait_for_upload(task_id, poll_interval=poll_interval)
 
     def wait_for_upload(
-        self,
-        task_id: str,
-        poll_interval: Optional[float] = None
+        self, task_id: str, poll_interval: Optional[float] = None
     ) -> Dict[str, Any]:
         """
         Wait for an upload task to complete and return the result.
@@ -250,8 +244,9 @@ class RAGClient:
 
             except requests.exceptions.RequestException as e:
                 # Only re-raise connection/network errors
-                if isinstance(e, (requests.exceptions.ConnectionError,
-                                  requests.exceptions.Timeout)):
+                if isinstance(
+                    e, (requests.exceptions.ConnectionError, requests.exceptions.Timeout)
+                ):
                     raise
                 # For other HTTP errors, retry after waiting
                 time.sleep(poll_interval)
@@ -262,7 +257,7 @@ class RAGClient:
         response = self.session.get(f"{self.base_url}/api/tasks/{task_id}")
         response.raise_for_status()
         return response.json()
-    
+
     def list_files(self, entity_id: str) -> List[Dict[str, Any]]:
         """List all files for an entity"""
         response = self.session.get(f"{self.base_url}/api/entities/{entity_id}/files")
@@ -290,7 +285,7 @@ class RAGClient:
         source: Optional[str] = None,
         filename: Optional[str] = None,
         pages: Optional[List[int]] = None,
-        processed_by: str = "API"
+        processed_by: str = "API",
     ) -> Dict[str, Any]:
         """
         Ingest a single chunk with automatic duplicate detection.
@@ -327,29 +322,25 @@ class RAGClient:
                 "chunk_order_index": chunk_order_index,
                 "source": source or entity_id,
                 "filename": filename or "chunk.txt",
-                "pages": pages or []
+                "pages": pages or [],
             },
             "metadata": {
                 "chunk_index": chunk_order_index,
                 "tokens": tokens,
                 "processed_by": processed_by,
                 "doc_id": doc_id,
-                "entity_id": entity_id
-            }
+                "entity_id": entity_id,
+            },
         }
 
         response = self.session.post(
-            f"{self.base_url}/api/entities/{entity_id}/chunks",
-            json=chunk_data
+            f"{self.base_url}/api/entities/{entity_id}/chunks", json=chunk_data
         )
         response.raise_for_status()
         return response.json()
 
     def ingest_chunks_batch(
-        self,
-        entity_id: str,
-        chunks: List[Dict[str, Any]],
-        doc_id: Optional[str] = None
+        self, entity_id: str, chunks: List[Dict[str, Any]], doc_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Batch ingest multiple chunks with automatic duplicate detection.
@@ -413,69 +404,66 @@ class RAGClient:
                     "chunk_order_index": chunk_order_index,
                     "source": source,
                     "filename": filename,
-                    "pages": pages
+                    "pages": pages,
                 },
                 "metadata": {
                     "chunk_index": chunk_order_index,
                     "tokens": tokens,
                     "processed_by": processed_by,
                     "doc_id": chunk_doc_id,
-                    "entity_id": entity_id
-                }
+                    "entity_id": entity_id,
+                },
             }
             formatted_chunks.append(formatted_chunk)
 
         request_data = {"chunks": formatted_chunks}
 
         response = self.session.post(
-            f"{self.base_url}/api/entities/{entity_id}/chunks/batch",
-            json=request_data
+            f"{self.base_url}/api/entities/{entity_id}/chunks/batch", json=request_data
         )
         response.raise_for_status()
         return response.json()
 
     # Chat Management
-    
-    def create_session(self, entity_id: str, session_name: Optional[str] = None,
-                      metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+
+    def create_session(
+        self,
+        entity_id: str,
+        session_name: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """Create a chat session"""
         response = self.session.post(
             f"{self.base_url}/api/chat/sessions",
-            json={
-                "entity_id": entity_id,
-                "session_name": session_name,
-                "metadata": metadata
-            }
+            json={"entity_id": entity_id, "session_name": session_name, "metadata": metadata},
         )
         response.raise_for_status()
         return response.json()
-    
+
     def get_session(self, session_id: str) -> Dict[str, Any]:
         """Get session details"""
         response = self.session.get(f"{self.base_url}/api/chat/sessions/{session_id}")
         response.raise_for_status()
         return response.json()
-    
+
     def list_sessions(self, entity_id: str) -> List[Dict[str, Any]]:
         """List all sessions for an entity"""
         response = self.session.get(f"{self.base_url}/api/entities/{entity_id}/sessions")
         response.raise_for_status()
         return response.json()
-    
+
     def delete_session(self, session_id: str) -> Dict[str, Any]:
         """Delete a session"""
         response = self.session.delete(f"{self.base_url}/api/chat/sessions/{session_id}")
         response.raise_for_status()
         return response.json()
-    
+
     def get_messages(self, session_id: str) -> List[Dict[str, Any]]:
         """Get chat history"""
-        response = self.session.get(
-            f"{self.base_url}/api/chat/sessions/{session_id}/messages"
-        )
+        response = self.session.get(f"{self.base_url}/api/chat/sessions/{session_id}/messages")
         response.raise_for_status()
         return response.json()
-    
+
     def chat(self, session_id: str, message: str, stream: bool = False) -> Any:
         """
         Send a chat message
@@ -486,12 +474,8 @@ class RAGClient:
         """
         response = self.session.post(
             f"{self.base_url}/api/chat",
-            json={
-                "session_id": session_id,
-                "message": message,
-                "stream": stream
-            },
-            stream=stream
+            json={"session_id": session_id, "message": message, "stream": stream},
+            stream=stream,
         )
         response.raise_for_status()
 
@@ -501,7 +485,7 @@ class RAGClient:
         # Parse the response to extract tracking information
         response_data = response.json()
         return response_data
-    
+
     # Search
     # Note: Search endpoint is disabled in the API
     # def search(self, entity_id: str, query: str, k: int = 5,
@@ -518,24 +502,21 @@ class RAGClient:
     #     )
     #     response.raise_for_status()
     #     return response.json()
-    
+
     def get_knowledge_graph(self, entity_ids: List[str]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         response = self.session.get(
-            f"{self.base_url}/api/knowledge-graph",
-            json={
-                "entity_ids": entity_ids
-            }
+            f"{self.base_url}/api/knowledge-graph", json={"entity_ids": entity_ids}
         )
         response.raise_for_status()
         return response.json().get("nodes", []), response.json().get("relationships", [])
-    
+
     # System
     def health(self) -> Dict[str, Any]:
         """Check API health"""
         response = self.session.get(f"{self.base_url}/health")
         response.raise_for_status()
         return response.json()
-    
+
     # def worker_status(self) -> Dict[str, Any]:
     #     """Get worker status"""
     #     response = self.session.get(f"{self.base_url}/api/status/workers")
@@ -572,7 +553,7 @@ if __name__ == "__main__":
             doc_id="doc_financial_2024",
             chunk_order_index=0,
             tokens=45,
-            pages=[1]
+            pages=[1],
         )
         print(f"Chunk ingestion result: {chunk_result}")
         print(f"  - Indexed: {chunk_result['indexed']}")
@@ -585,7 +566,7 @@ if __name__ == "__main__":
             text="TechCorp Inc is a leading technology company founded in 2020...",
             doc_id="doc_financial_2024",
             chunk_order_index=0,
-            tokens=45
+            tokens=45,
         )
         print(f"Duplicate detection: {dup_result}")
         print(f"  - Indexed: {dup_result['indexed']} (should be False)")
@@ -605,29 +586,27 @@ if __name__ == "__main__":
                 "text": "Financial Overview: Total revenue for Q1 2024 was $5.2M...",
                 "chunk_order_index": 1,
                 "tokens": 52,
-                "pages": [2]
+                "pages": [2],
             },
             {
                 "chunk_id": "batch_chunk_002",
                 "text": "Product Portfolio: Our main products include...",
                 "chunk_order_index": 2,
                 "tokens": 48,
-                "pages": [3]
+                "pages": [3],
             },
             {
                 "chunk_id": "batch_chunk_003",
                 "text": "Market Position: We maintain leadership in enterprise solutions...",
                 "chunk_order_index": 3,
                 "tokens": 51,
-                "pages": [4]
-            }
+                "pages": [4],
+            },
         ]
 
         # Ingest batch of chunks
         batch_result = client.ingest_chunks_batch(
-            entity_id=entity_id,
-            chunks=chunks,
-            doc_id="doc_financial_2024"
+            entity_id=entity_id, chunks=chunks, doc_id="doc_financial_2024"
         )
         print(f"Batch ingestion result:")
         print(f"  - Total chunks: {batch_result['total_chunks']}")
@@ -642,14 +621,12 @@ if __name__ == "__main__":
                 "text": "Future Plans: We plan to expand into emerging markets...",
                 "chunk_order_index": 4,
                 "tokens": 44,
-                "pages": [5]
+                "pages": [5],
             }
         ]
 
         mixed_result = client.ingest_chunks_batch(
-            entity_id=entity_id,
-            chunks=mixed_batch,
-            doc_id="doc_financial_2024"
+            entity_id=entity_id, chunks=mixed_batch, doc_id="doc_financial_2024"
         )
         print(f"\nMixed batch result (2 duplicates + 1 new):")
         print(f"  - Total chunks: {mixed_result['total_chunks']}")

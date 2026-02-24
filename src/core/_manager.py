@@ -8,12 +8,17 @@ import asyncio
 
 from ..config import Config
 from ..log_creator import get_file_logger
-from ..infrastructure.storage.json_storage import JSONStorage, get_storage
+from ..infrastructure.storage import JSONStorage, get_storage
 from ..infrastructure.dynamic_thread_pool import executor
-from .entity_scoped_rag import index_document_entity_scoped, get_entity_rag_manager
-from .models import File, TaskStatus, KnowledgeGraph, KnowledgeGraphNode, KnowledgeGraphRelationship
-from .agents.research_agent import ResearchAgent
-from .agents.custom_types import ResponseRequiredRequest
+from ._entity_scoped_rag import index_document_entity_scoped
+from ._models import (
+    File,
+    TaskStatus,
+    KnowledgeGraph,
+    KnowledgeGraphNode,
+    KnowledgeGraphRelationship,
+)
+from .agents import ResearchAgent, ResponseRequiredRequest
 
 logger = get_file_logger()
 
@@ -22,12 +27,13 @@ SESSION_CLEANUP_INTERVAL = 300  # Check every 5 minutes (300 seconds)
 SESSION_INACTIVITY_TIMEOUT = 3600  # Offload sessions inactive for 1 hour (3600 seconds)
 
 # Configuration for different operation types
-CHAT_MAX_WORKERS = 20      # High throughput for user-facing chat
+CHAT_MAX_WORKERS = 20  # High throughput for user-facing chat
 # SEARCH_MAX_WORKERS = 10    # Moderate for search operations
 
 # Semaphores for chat and search operations
 chat_semaphore = asyncio.Semaphore(CHAT_MAX_WORKERS)
 # search_semaphore = asyncio.Semaphore(SEARCH_MAX_WORKERS)
+
 
 class Manager:
     def __init__(self):
@@ -59,8 +65,11 @@ class Manager:
 
     def _start_session_cleanup(self):
         """Start the background thread for session cleanup"""
+
         def cleanup_worker():
-            logger.info(f"[Session Cleanup] Started background cleanup thread (interval: {SESSION_CLEANUP_INTERVAL}s, timeout: {SESSION_INACTIVITY_TIMEOUT}s)")
+            logger.info(
+                f"[Session Cleanup] Started background cleanup thread (interval: {SESSION_CLEANUP_INTERVAL}s, timeout: {SESSION_INACTIVITY_TIMEOUT}s)"
+            )
             while not self.cleanup_shutdown.is_set():
                 try:
                     time.sleep(SESSION_CLEANUP_INTERVAL)
@@ -87,7 +96,9 @@ class Manager:
 
                     try:
                         # Parse ISO format timestamp to datetime
-                        last_accessed = datetime.fromisoformat(last_accessed_str.replace('Z', '+00:00'))
+                        last_accessed = datetime.fromisoformat(
+                            last_accessed_str.replace("Z", "+00:00")
+                        )
                         last_accessed_timestamp = last_accessed.timestamp()
                     except (ValueError, AttributeError):
                         continue
@@ -152,7 +163,13 @@ class Manager:
         with self.session_cleanup_lock:
             self.session_locks.pop(session_id, None)
 
-    def create_entity(self, entity_id: str, entity_name: str, description: Optional[str]=None, metadata: Optional[Dict[str, Any]]=None) -> Dict[str, Any]:
+    def create_entity(
+        self,
+        entity_id: str,
+        entity_name: str,
+        description: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         # THREAD SAFETY FIX: Serialize entity creation with lock to prevent concurrent creation race
         with self.entity_creation_lock:
             # Check existence while holding lock - prevents TOCTOU (Time-of-check-time-of-use) race
@@ -182,10 +199,7 @@ class Manager:
                 entity_data["metadata"] = metadata
 
             self.storage.update_one(
-                "entities",
-                {"_id": entity_id},
-                {"$set": entity_data},
-                upsert=True
+                "entities", {"_id": entity_id}, {"$set": entity_data}, upsert=True
             )
             return {
                 "entity_id": entity_id,
@@ -214,9 +228,9 @@ class Manager:
         # (deleted IDs have format [DELETED]entity_id_timestamp)
         if not entity and not entity_id.startswith("[DELETED]"):
             # Search for deleted entity using regex pattern
-            deleted_entities = self.storage.find("entities", {
-                "_id": {"$regex": f"^\\[DELETED\\]{entity_id}_"}
-            })
+            deleted_entities = self.storage.find(
+                "entities", {"_id": {"$regex": f"^\\[DELETED\\]{entity_id}_"}}
+            )
             if deleted_entities:
                 # Get the most recently deleted one (last one in the list)
                 entity = deleted_entities[-1]
@@ -228,23 +242,20 @@ class Manager:
         if not entity:
             raise ValueError(f"Entity with ID {entity_id} does not exist")
         return entity
-        
+
     def modify_entity(self, entity_id: str, metadata: Optional[Dict[str, Any]]):
         if not self.storage.find_one("entities", {"_id": entity_id}):
             raise ValueError(f"Entity with ID {entity_id} does not exist")
 
         updated_at = datetime.now(timezone.utc).isoformat()
-            
+
         self.storage.update_one(
             "entities",
             {"_id": entity_id},
-            {"$set": {
-                "metadata": metadata,
-                "updated_at": updated_at
-            }},
-            upsert=True
+            {"$set": {"metadata": metadata, "updated_at": updated_at}},
+            upsert=True,
         )
-    
+
     def delete_entity(self, entity_id: str) -> Dict[str, Any]:
         # THREAD SAFETY FIX: Serialize entity deletion to prevent concurrent delete races
         with self.entity_creation_lock:
@@ -252,25 +263,19 @@ class Manager:
             entity_data = self.get_entity(entity_id)
             sessions = self.list_entity_chat_sessions(entity_id)
 
-            self.storage.delete_one(
-                "entities",
-                {"_id": entity_id}
-            )
+            self.storage.delete_one("entities", {"_id": entity_id})
             deleted_at = datetime.now(timezone.utc).isoformat()
 
             # Create unique deleted ID with timestamp to allow ID reuse
             deleted_entity_id = f"[DELETED]{entity_id}_{deleted_at}"
 
             entity_dir = entity_data.get("entity_dir")
-            new_entity_dir = os.path.join(self.entities_dir, f'[DELETED]{entity_id}_{deleted_at}')
+            new_entity_dir = os.path.join(self.entities_dir, f"[DELETED]{entity_id}_{deleted_at}")
             entity_data["_id"] = deleted_entity_id
             entity_data["deleted_at"] = deleted_at
             entity_data["entity_dir"] = new_entity_dir
             self.storage.update_one(
-                "entities",
-                {"_id": deleted_entity_id},
-                {"$set": entity_data},
-                upsert=True
+                "entities", {"_id": deleted_entity_id}, {"$set": entity_data}, upsert=True
             )
 
         # Delete sessions and rename directory OUTSIDE lock to avoid blocking other operations
@@ -280,15 +285,17 @@ class Manager:
             try:
                 os.rename(entity_dir, new_entity_dir)
             except OSError as e:
-                logger.warning(f"Failed to rename entity directory {entity_dir} to {new_entity_dir}: {e}")
+                logger.warning(
+                    f"Failed to rename entity directory {entity_dir} to {new_entity_dir}: {e}"
+                )
 
         return {
             "entity_id": entity_id,
             "deleted_at": deleted_at,
             "session_deleted": len(sessions),
-            "note": "Entity data is retained with [DELETED] prefix for audit purposes"
+            "note": "Entity data is retained with [DELETED] prefix for audit purposes",
         }
-        
+
     def list_entities(self, include_deleted: bool = False) -> List[Dict[str, Any]]:
         """
         List all entities.
@@ -304,15 +311,19 @@ class Manager:
         else:
             # Fetch all entities and filter out deleted ones
             all_entities = self.storage.find("entities")
-            return [entity for entity in all_entities if not entity.get("_id", "").startswith("[DELETED]")]
-    
+            return [
+                entity
+                for entity in all_entities
+                if not entity.get("_id", "").startswith("[DELETED]")
+            ]
+
     def _process_file_upload(
         self,
         task_id: str,
         entity_id: str,
         file: File,
         description: Optional[str],
-        source: Optional[str]
+        source: Optional[str],
     ):
         """
         Background worker function to process file upload
@@ -324,10 +335,12 @@ class Manager:
             self.storage.update_one(
                 "tasks",
                 {"_id": task_id},
-                {"$set": {
-                    "status": TaskStatus.PROCESSING.value,
-                    "processing_started_at": processing_started_at
-                }}
+                {
+                    "$set": {
+                        "status": TaskStatus.PROCESSING.value,
+                        "processing_started_at": processing_started_at,
+                    }
+                },
             )
             logger.info(f"Processing file upload for task {task_id}")
 
@@ -335,7 +348,7 @@ class Manager:
             metadata: Dict[str, Optional[str]] = {
                 "description": description,
                 "uploaded_at": datetime.now(timezone.utc).isoformat(),
-                "source": source
+                "source": source,
             }
 
             if source:
@@ -352,30 +365,31 @@ class Manager:
                 raise ValueError(f"Entity directory for {entity_id} does not exist or was removed")
 
             result = index_document_entity_scoped(
-                entity_id=entity_id,
-                file=file,
-                metadata=metadata,
-                entity_dir=entity_dir
+                entity_id=entity_id, file=file, metadata=metadata, entity_dir=entity_dir
             )
             completed_at = datetime.now(timezone.utc).isoformat()
 
             if not result:
                 raise Exception("Failed to index document")
-            
+
             if result.get("is_duplicate"):
-                logger.info(f"Uploaded a duplicate file {file.filename} to entity {entity_id}, doc_id: {result['doc_id']}")
+                logger.info(
+                    f"Uploaded a duplicate file {file.filename} to entity {entity_id}, doc_id: {result['doc_id']}"
+                )
 
                 # Update task with estimated cost
                 self.storage.update_one(
                     "tasks",
                     {"_id": task_id},
-                    {"$set": {
-                        "status": TaskStatus.COMPLETED.value,
-                        "estimated_cost_usd": 0.0,
-                        "doc_id": result["doc_id"],
-                        "completed_at": completed_at,
-                        "is_duplicate": True
-                    }}
+                    {
+                        "$set": {
+                            "status": TaskStatus.COMPLETED.value,
+                            "estimated_cost_usd": 0.0,
+                            "doc_id": result["doc_id"],
+                            "completed_at": completed_at,
+                            "is_duplicate": True,
+                        }
+                    },
                 )
             else:
 
@@ -383,20 +397,24 @@ class Manager:
                 estimated_cost_usd = result.get("estimated_cost_usd", 0.0)
                 chunks_count = result.get("chunks_count", 0)
 
-                logger.info(f"Uploaded file {file.filename} to entity {entity_id}, doc_id: {result['doc_id']}, "
-                        f"cost: ${estimated_cost_usd:.6f}, chunks: {chunks_count}, source: {source or 'default'}")
+                logger.info(
+                    f"Uploaded file {file.filename} to entity {entity_id}, doc_id: {result['doc_id']}, "
+                    f"cost: ${estimated_cost_usd:.6f}, chunks: {chunks_count}, source: {source or 'default'}"
+                )
 
                 # Update task with estimated cost
                 self.storage.update_one(
                     "tasks",
                     {"_id": task_id},
-                    {"$set": {
-                        "status": TaskStatus.COMPLETED.value,
-                        "estimated_cost_usd": round(estimated_cost_usd, 6),
-                        "doc_id": result["doc_id"],
-                        "chunks_count": chunks_count,
-                        "completed_at": completed_at
-                    }}
+                    {
+                        "$set": {
+                            "status": TaskStatus.COMPLETED.value,
+                            "estimated_cost_usd": round(estimated_cost_usd, 6),
+                            "doc_id": result["doc_id"],
+                            "chunks_count": chunks_count,
+                            "completed_at": completed_at,
+                        }
+                    },
                 )
 
                 # Update entity's total cost and document count using atomic operations
@@ -405,15 +423,13 @@ class Manager:
                     "entities",
                     {"_id": entity_id},
                     {
-                        "$set": {
-                            "last_updated_at": completed_at
-                        },
+                        "$set": {"last_updated_at": completed_at},
                         "$inc": {
                             "estimated_cost_usd": round(estimated_cost_usd, 6),
                             "documents_count": 1,
-                            "chunk_count": chunks_count
-                        }
-                    }
+                            "chunk_count": chunks_count,
+                        },
+                    },
                 )
 
             logger.info(f"Completed file upload for task {task_id}")
@@ -424,42 +440,45 @@ class Manager:
             self.storage.update_one(
                 "tasks",
                 {"_id": task_id},
-                {"$set": {
-                    "status": TaskStatus.FAILED.value,
-                    "error_message": str(e),
-                    "completed_at": completed_at
-                }}
+                {
+                    "$set": {
+                        "status": TaskStatus.FAILED.value,
+                        "error_message": str(e),
+                        "completed_at": completed_at,
+                    }
+                },
             )
-    
-    def upload_file(self, entity_id: str, file: File, description: Optional[str]=None, source: Optional[str]=None) -> Dict[str, Any]:
+
+    def upload_file(
+        self,
+        entity_id: str,
+        file: File,
+        description: Optional[str] = None,
+        source: Optional[str] = None,
+    ) -> Dict[str, Any]:
         _ = self.get_entity(entity_id)
         uploaded_at = datetime.now(timezone.utc).isoformat()
         task_id = f"upload_{uuid.uuid4().hex[:12]}"
-        
+
         self.storage.update_one(
             "tasks",
             {"_id": task_id},
-            {"$set": {
-                "_id": task_id,
-                "task_type": "upload",
-                "entity_id": entity_id,
-                "uploaded_at": uploaded_at,
-                "description": description,
-                "source": source,
-                "status": TaskStatus.PENDING.value
-            }},
-            upsert=True
+            {
+                "$set": {
+                    "_id": task_id,
+                    "task_type": "upload",
+                    "entity_id": entity_id,
+                    "uploaded_at": uploaded_at,
+                    "description": description,
+                    "source": source,
+                    "status": TaskStatus.PENDING.value,
+                }
+            },
+            upsert=True,
         )
-        
-        executor.submit(
-            self._process_file_upload,
-            task_id,
-            entity_id,
-            file,
-            description,
-            source
-        )
-        
+
+        executor.submit(self._process_file_upload, task_id, entity_id, file, description, source)
+
         return {
             "task_id": task_id,
             "entity_id": entity_id,
@@ -468,9 +487,9 @@ class Manager:
             "description": description,
             "source": source,
             "uploaded_at": uploaded_at,
-            "status": TaskStatus.PENDING.value
+            "status": TaskStatus.PENDING.value,
         }
-        
+
     def get_task_status(self, task_id: str) -> Dict[str, Any]:
         """
         Get task status and enrich with services_used from document metadata
@@ -488,7 +507,12 @@ class Manager:
         # Enrich task with services_used from document metadata if available
         doc_id = task.get("doc_id")
         entity_id = task.get("entity_id")
-        if task.get("task_type", "") == "upload" and task.get("status") == TaskStatus.COMPLETED.value and doc_id and entity_id:
+        if (
+            task.get("task_type", "") == "upload"
+            and task.get("status") == TaskStatus.COMPLETED.value
+            and doc_id
+            and entity_id
+        ):
             try:
                 # Get entity directory
                 entity_data = self.storage.find_one("entities", {"_id": entity_id})
@@ -507,7 +531,7 @@ class Manager:
                 # Continue without services_used if fetching fails
 
         return task
-    
+
     def list_files(self, entity_id: str, include_deleted: bool = False) -> List[Dict[str, Any]]:
         """
         List all files for an entity.
@@ -520,14 +544,16 @@ class Manager:
             List of document records
         """
         entity_data = self.get_entity(entity_id)
-        entity_storage = JSONStorage(entity_data['entity_dir'])
+        entity_storage = JSONStorage(entity_data["entity_dir"])
         documents = entity_storage.find("documents")
 
         if include_deleted:
             docs_result = documents
         else:
             # Filter out deleted documents
-            docs_result = [doc for doc in documents if not doc.get("_id", "").startswith("[DELETED]")]
+            docs_result = [
+                doc for doc in documents if not doc.get("_id", "").startswith("[DELETED]")
+            ]
 
         # Ensure each document has doc_id field for API compatibility
         for doc in docs_result:
@@ -535,208 +561,196 @@ class Manager:
                 doc["doc_id"] = doc["_id"]
 
         return docs_result
-    
-    # def delete_file(self, entity_id: str, doc_id: str) -> Dict[str, Any]:
-    #     """
-    #     Soft delete a file from an entity (preserves audit trail and removes from vector store)
 
-    #     Args:
-    #         entity_id: Entity ID
-    #         doc_id: Document ID to delete
+    def delete_file(self, entity_id: str, doc_id: str) -> Dict[str, Any]:
+        """
+        Soft delete a file from an entity (preserves audit trail and removes from vector store)
 
-    #     Returns:
-    #         Deletion response with metadata
+        Args:
+            entity_id: Entity ID
+            doc_id: Document ID to delete
 
-    #     Raises:
-    #         ValueError: If entity or document not found
-    #     """
-    #     # Get entity data
-    #     entity_data = self.get_entity(entity_id)
-    #     entity_storage = JSONStorage(entity_data['entity_dir'])
+        Returns:
+            Deletion response with metadata
 
-    #     # Find the document
-    #     doc = entity_storage.find_one("documents", {"_id": doc_id})
-    #     if not doc:
-    #         raise ValueError(f"Document with ID {doc_id} not found in entity {entity_id}")
+        Raises:
+            ValueError: If entity or document not found
+        """
+        # Get entity data
+        entity_data = self.get_entity(entity_id)
+        entity_storage = JSONStorage(entity_data["entity_dir"])
 
-    #     deleted_at = datetime.now(timezone.utc).isoformat()
+        # Find the document
+        doc = entity_storage.find_one("documents", {"_id": doc_id})
+        if not doc:
+            raise ValueError(f"Document with ID {doc_id} not found in entity {entity_id}")
 
-    #     # Get document details for response
-    #     filename = doc.get("doc_name", doc.get("filename", "unknown"))
-    #     chunks_count = doc.get("chunks_count", 0)
+        deleted_at = datetime.now(timezone.utc).isoformat()
 
-    #     # Delete from vector store (removes embeddings so document won't be retrieved in chat)
-    #     try:
-    #         rag_manager = get_entity_rag_manager()
-    #         result = rag_manager.delete_document(entity_id, doc_id, entity_dir=entity_data.get("entity_dir"))
-    #         logger.info(f"Removed document {doc_id} from vector store for entity {entity_id}")
+        # Get document details for response
+        filename = doc.get("doc_name", doc.get("filename", "unknown"))
+        chunks_count = doc.get("chunks_count", 0)
 
-    #         # Invalidate active sessions from cache for this entity
-    #         # They will reload from storage with updated vector store on next get_chat_session() call
-    #         invalidated_sessions = []
-    #         for session_id, session_data in list(self.chat_sessions.items()):
-    #             if session_data.get("entity_id") == entity_id:
-    #                 del self.chat_sessions[session_id]
-    #                 invalidated_sessions.append(session_id)
+        # Delete from vector store (removes embeddings so document won't be retrieved in chat)
+        try:
+            from ._entity_scoped_rag import get_entity_rag_manager
 
-    #         if invalidated_sessions:
-    #             logger.info(f"Invalidated {len(invalidated_sessions)} active session(s) for entity {entity_id}. "
-    #                        f"Sessions will reload from storage with updated vector store on next access.")
-    #     except Exception as e:
-    #         logger.error(f"Failed to remove document {doc_id} from vector store: {e}")
-    #         # Fail the deletion to maintain data consistency
-    #         raise ValueError(
-    #             f"Cannot delete document: failed to remove from vector store. "
-    #             f"Vector store must be cleaned before document is deleted from database. "
-    #             f"Please retry. Error: {e}"
-    #         )
+            rag_manager = get_entity_rag_manager()
+            result = rag_manager.delete_document(
+                entity_id, doc_id, entity_dir=entity_data.get("entity_dir")
+            )
+            logger.info(f"Removed document {doc_id} from vector store for entity {entity_id}")
 
-    #     # Delete from documents collection
-    #     entity_storage.delete_one("documents", {"_id": doc_id})
+            # Invalidate active sessions from cache for this entity
+            # They will reload from storage with updated vector store on next get_chat_session() call
+            invalidated_sessions = []
+            for session_id, session_data in list(self.chat_sessions.items()):
+                if session_data.get("entity_id") == entity_id:
+                    del self.chat_sessions[session_id]
+                    invalidated_sessions.append(session_id)
 
-    #     # Create a task entry for the deletion (for audit trail)
-    #     deletion_task_id = f"doc_delete_{str(uuid.uuid4())[:13]}"
-    #     deletion_task: Dict[str, Any] = {
-    #         "_id": deletion_task_id,
-    #         "task_type": "delete",
-    #         "doc_id": doc_id,
-    #         "entity_id": entity_id,
-    #         "doc_name": filename,
-    #         "created_at": deleted_at,
-    #         "status": "completed",
-    #         "estimated_cost_usd": result.get("estimated_cost_usd", 0)
-    #     }
+            if invalidated_sessions:
+                logger.info(
+                    f"Invalidated {len(invalidated_sessions)} active session(s) for entity {entity_id}. "
+                    f"Sessions will reload from storage with updated vector store on next access."
+                )
+        except Exception as e:
+            logger.error(f"Failed to remove document {doc_id} from vector store: {e}")
+            # Fail the deletion to maintain data consistency
+            raise ValueError(
+                f"Cannot delete document: failed to remove from vector store. "
+                f"Vector store must be cleaned before document is deleted from database. "
+                f"Please retry. Error: {e}"
+            )
 
-    #     # Store the deletion task in global storage
-    #     self.storage.update_one(
-    #         "tasks",
-    #         {"_id": deletion_task_id},
-    #         {"$set": deletion_task},
-    #         upsert=True
-    #     )
+        # Delete from documents collection
+        entity_storage.delete_one("documents", {"_id": doc_id})
 
-    #     # Store as archived/deleted document with [DELETED] prefix and timestamp
-    #     deleted_doc = doc.copy()
-    #     deleted_doc_id = f"[DELETED]{doc_id}_{deleted_at}"
-    #     deleted_doc["_id"] = deleted_doc_id
-    #     deleted_doc["doc_id"] = deleted_doc_id
-    #     deleted_doc["deleted_at"] = deleted_at
-    #     deleted_doc["deletion_task_id"] = deletion_task_id
-    #     deleted_doc["deletion_services_used"] = [result.get("services_used", [])],
-    #     deleted_doc["deletion_cost_usd"] = result.get("estimated_cost_usd", 0)
-        
-    #     entity_storage.update_one(
-    #         "documents",
-    #         {"_id": deleted_doc_id},
-    #         {"$set": deleted_doc},
-    #         upsert=True
-    #     )
+        # Create a task entry for the deletion (for audit trail)
+        deletion_task_id = f"doc_delete_{str(uuid.uuid4())[:13]}"
+        deletion_task: Dict[str, Any] = {
+            "_id": deletion_task_id,
+            "task_type": "delete",
+            "doc_id": doc_id,
+            "entity_id": entity_id,
+            "doc_name": filename,
+            "created_at": deleted_at,
+            "status": "completed",
+            "estimated_cost_usd": result.get("estimated_cost_usd", 0),
+        }
 
-    #     # Update entity's document and chunk counts using atomic operations
-    #     self.storage.update_one(
-    #         "entities",
-    #         {"_id": entity_id},
-    #         {
-    #             "$set": {
-    #                 "last_modified": deleted_at
-    #             },
-    #             "$inc": {
-    #                 "documents_count": -1,
-    #                 "chunk_count": -chunks_count
-    #                 ""
-    #             }
-    #         }
-    #     )
+        # Store the deletion task in global storage
+        self.storage.update_one(
+            "tasks", {"_id": deletion_task_id}, {"$set": deletion_task}, upsert=True
+        )
 
-    #     # Also update in entity's storage for consistency (best-effort, non-critical)
-    #     # Entity-scoped storage update is a replica; global storage is the authoritative source
-    #     try:
-    #         entity_data_updated = entity_data.copy()
-    #         entity_data_updated["last_modified"] = deleted_at
+        # Store as archived/deleted document with [DELETED] prefix and timestamp
+        deleted_doc = doc.copy()
+        deleted_doc_id = f"[DELETED]{doc_id}_{deleted_at}"
+        deleted_doc["_id"] = deleted_doc_id
+        deleted_doc["doc_id"] = deleted_doc_id
+        deleted_doc["deleted_at"] = deleted_at
+        deleted_doc["deletion_task_id"] = deletion_task_id
+        deleted_doc["deletion_services_used"] = result.get("services_used", [])
+        deleted_doc["deletion_cost_usd"] = result.get("estimated_cost_usd", 0)
 
-    #         entity_storage.update_one(
-    #             "entities",
-    #             {"_id": entity_id},
-    #             {
-    #                 "$set": entity_data_updated,
-    #                 "$inc": {
-    #                     "documents_count": -1,
-    #                     "chunk_count": -chunks_count
-    #                 }
-    #             },
-    #             upsert=True
-    #         )
-    #     except Exception as e:
-    #         # Log error but don't fail - global storage is authoritative
-    #         logger.warning(
-    #             f"Failed to update entity counts in entity-scoped storage for {entity_id}: {e}. "
-    #             f"Global storage updated successfully. Consistency may be temporarily inconsistent."
-    #         )
+        entity_storage.update_one(
+            "documents", {"_id": deleted_doc_id}, {"$set": deleted_doc}, upsert=True
+        )
 
-    #     logger.info(f"Deleted document {doc_id} from entity {entity_id} (removed {chunks_count} chunks)")
+        # Update entity's document and chunk counts using atomic operations
+        self.storage.update_one(
+            "entities",
+            {"_id": entity_id},
+            {
+                "$set": {"last_modified": deleted_at},
+                "$inc": {"documents_count": -1, "chunk_count": -chunks_count},
+            },
+        )
 
-    #     return {
-    #         "success": True,
-    #         "doc_id": doc_id,
-    #         "entity_id": entity_id,
-    #         "filename": filename,
-    #         "deleted_at": deleted_at,
-    #         "chunks_removed": chunks_count,
-    #         "deletion_task_id": deletion_task_id,
-    #         "services_used": [deletion_service.to_dict()],
-    #         "estimated_cost_usd": deletion_service.estimated_cost_usd,
-    #         "message": f"Document '{filename}' has been deleted. Data is retained with [DELETED] prefix for audit purposes"
-    #     }
-    
-    def create_chat_session(self, entity_id: str, session_name: Optional[str]=None, metadata: Optional[Dict[str, Any]]=None) -> Dict[str, Any]:
+        # Also update in entity's storage for consistency (best-effort, non-critical)
+        # Entity-scoped storage update is a replica; global storage is the authoritative source
+        try:
+            entity_data_updated = entity_data.copy()
+            entity_data_updated["last_modified"] = deleted_at
+
+            entity_storage.update_one(
+                "entities",
+                {"_id": entity_id},
+                {
+                    "$set": entity_data_updated,
+                    "$inc": {"documents_count": -1, "chunk_count": -chunks_count},
+                },
+                upsert=True,
+            )
+        except Exception as e:
+            # Log error but don't fail - global storage is authoritative
+            logger.warning(
+                f"Failed to update entity counts in entity-scoped storage for {entity_id}: {e}. "
+                f"Global storage updated successfully. Consistency may be temporarily inconsistent."
+            )
+
+        logger.info(
+            f"Deleted document {doc_id} from entity {entity_id} (removed {chunks_count} chunks)"
+        )
+
+        return {
+            "success": True,
+            "doc_id": doc_id,
+            "entity_id": entity_id,
+            "filename": filename,
+            "deleted_at": deleted_at,
+            "chunks_removed": chunks_count,
+            "deletion_task_id": deletion_task_id,
+            "services_used": result.get("services_used", []),
+            "estimated_cost_usd": result.get("estimated_cost_usd", 0),
+            "message": f"Document '{filename}' has been deleted. Data is retained with [DELETED] prefix for audit purposes",
+        }
+
+    def create_chat_session(
+        self,
+        entity_id: str,
+        session_name: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         entity_data = self.get_entity(entity_id)
 
         # Generate session ID
         session_id = f"session_{uuid.uuid4().hex[:12]}"
 
-        entity_storage = JSONStorage(entity_data['entity_dir'])
+        entity_storage = JSONStorage(entity_data["entity_dir"])
 
         # Create session data
         session_data: Dict[str, Any] = {
             "session_id": session_id,
             "entity_id": entity_id,
             "session_name": session_name,
-            "entity_name": entity_data['entity_name'],
-            "entity_dir": entity_data['entity_dir'],
+            "entity_name": entity_data["entity_name"],
+            "entity_dir": entity_data["entity_dir"],
             "created_at": datetime.now(timezone.utc).isoformat(),
             "last_accessed": datetime.now(timezone.utc).isoformat(),
             "metadata": metadata or {},
             "message_count": 0,
-            "estimated_cost_usd": 0.0
+            "estimated_cost_usd": 0.0,
         }
 
         self.storage.update_one(
-            "sessions",
-            {"_id": session_id},
-            {"$set": session_data},
-            upsert=True
+            "sessions", {"_id": session_id}, {"$set": session_data}, upsert=True
         )
 
         entity_storage.update_one(
-            "sessions",
-            {"_id": session_id},
-            {"$set": session_data},
-            upsert=True
+            "sessions", {"_id": session_id}, {"$set": session_data}, upsert=True
         )
 
         # Increment sessions_count in entity
-        self.storage.update_one(
-            "entities",
-            {"_id": entity_id},
-            {"$inc": {"sessions_count": 1}}
-        )
+        self.storage.update_one("entities", {"_id": entity_id}, {"$inc": {"sessions_count": 1}})
 
         # Store agent in memory cache (not in response) - RACE CONDITION FIX: Acquire lock before accessing chat_sessions
         cache_entry = session_data.copy()
         cache_entry["agent"] = ResearchAgent(
             session_data["entity_id"],
             entity_data["entity_name"],
-            entity_dir=entity_data.get("entity_dir")
+            entity_dir=entity_data.get("entity_dir"),
         )
         cache_entry["conversation_history"] = []
 
@@ -745,7 +759,7 @@ class Manager:
 
         # Return only serializable data
         return session_data
-    
+
     def get_chat_session(self, session_id: str, include_deleted: bool = False) -> Dict[str, Any]:
         """
         Get chat session by ID.
@@ -773,9 +787,9 @@ class Manager:
             # If not found and ID doesn't have [DELETED] prefix, try to find deleted session with regex
             # (deleted IDs have format [DELETED]session_id_timestamp)
             if not session_entry and not session_id.startswith("[DELETED]"):
-                deleted_sessions = self.storage.find("sessions", {
-                    "_id": {"$regex": f"^\\[DELETED\\]{session_id}_"}
-                })
+                deleted_sessions = self.storage.find(
+                    "sessions", {"_id": {"$regex": f"^\\[DELETED\\]{session_id}_"}}
+                )
                 if deleted_sessions:
                     # Get the most recently deleted one (last one in the list)
                     session_entry = deleted_sessions[-1]
@@ -789,7 +803,7 @@ class Manager:
 
             # Use the actual session ID from storage (may have [DELETED] prefix)
             actual_session_id = session_entry.get("_id")
-            entity_storage = JSONStorage(session_entry['entity_dir'])
+            entity_storage = JSONStorage(session_entry["entity_dir"])
             session_data = entity_storage.find_one("sessions", {"_id": actual_session_id})
             if not session_data:
                 raise ValueError(f"Chat session with ID {session_id} does not exist")
@@ -799,9 +813,12 @@ class Manager:
             agent = ResearchAgent(
                 session_data["entity_id"],
                 session_data["entity_name"],
-                entity_dir=session_entry.get("entity_dir")
+                entity_dir=session_entry.get("entity_dir"),
             )
-            agent.conversation_history = [{"role": message["role"],"content": message["content"]} for message in session_data.get("conversation_history", [])]
+            agent.conversation_history = [
+                {"role": message["role"], "content": message["content"]}
+                for message in session_data.get("conversation_history", [])
+            ]
             cache_entry["agent"] = agent
 
             # RACE CONDITION FIX: Protect cache write
@@ -820,27 +837,21 @@ class Manager:
                 self.chat_sessions[session_id]["last_accessed"] = last_accessed
 
         self.storage.update_one(
-            "sessions",
-            {"_id": actual_session_id},
-            {"$set": {
-                "last_accessed": last_accessed
-            }}
+            "sessions", {"_id": actual_session_id}, {"$set": {"last_accessed": last_accessed}}
         )
         if not entity_storage:
-            entity_storage = JSONStorage(session_entry['entity_dir'])
+            entity_storage = JSONStorage(session_entry["entity_dir"])
         entity_storage.update_one(
-            "sessions",
-            {"_id": actual_session_id},
-            {"$set": {
-                "last_accessed": last_accessed
-            }}
+            "sessions", {"_id": actual_session_id}, {"$set": {"last_accessed": last_accessed}}
         )
         # Return copy without agent for serialization
         response_data = session_entry.copy()
         response_data.pop("agent", None)
         return response_data
-    
-    def list_entity_chat_sessions(self, entity_id: str, include_deleted: bool = False) -> List[Dict[str, Any]]:
+
+    def list_entity_chat_sessions(
+        self, entity_id: str, include_deleted: bool = False
+    ) -> List[Dict[str, Any]]:
         """
         List all chat sessions for an entity.
 
@@ -852,16 +863,17 @@ class Manager:
             List of session data dicts
         """
         _ = self.get_entity(entity_id)
-        sessions = self.storage.find(
-            "sessions",
-            {"entity_id": entity_id}
-        )
+        sessions = self.storage.find("sessions", {"entity_id": entity_id})
         if include_deleted:
             return [session for session in sessions]
         else:
             # Filter out deleted sessions
-            return [session for session in sessions if not session.get("_id", "").startswith("[DELETED]")]
-        
+            return [
+                session
+                for session in sessions
+                if not session.get("_id", "").startswith("[DELETED]")
+            ]
+
     def delete_chat_session(self, session_id: str):
         deleted_at = datetime.now(timezone.utc).isoformat()
 
@@ -883,12 +895,9 @@ class Manager:
         session_entry["_id"] = deleted_session_id
         session_entry["deleted_at"] = deleted_at
         self.storage.update_one(
-            "sessions",
-            {"_id": deleted_session_id},
-            {"$set": session_entry},
-            upsert=True
+            "sessions", {"_id": deleted_session_id}, {"$set": session_entry}, upsert=True
         )
-        entity_storage = JSONStorage(session_entry['entity_dir'])
+        entity_storage = JSONStorage(session_entry["entity_dir"])
         session_data = entity_storage.find_one("sessions", {"_id": session_id})
         if not session_data:
             raise ValueError(f"Chat session with ID {session_id} does not exist")
@@ -896,26 +905,23 @@ class Manager:
         session_data["_id"] = deleted_session_id
         session_data["deleted_at"] = deleted_at
         entity_storage.update_one(
-            "sessions",
-            {"_id": deleted_session_id},
-            {"$set": session_data},
-            upsert=True
+            "sessions", {"_id": deleted_session_id}, {"$set": session_data}, upsert=True
         )
 
         # Decrement sessions_count in entity
         self.storage.update_one(
-            "entities",
-            {"_id": session_entry.get("entity_id")},
-            {"$inc": {"sessions_count": -1}}
+            "entities", {"_id": session_entry.get("entity_id")}, {"$inc": {"sessions_count": -1}}
         )
 
         return {
             "session_id": session_id,
             "deleted_at": deleted_at,
-            "note": "Session data is retained with [DELETED] prefix for audit purposes"
+            "note": "Session data is retained with [DELETED] prefix for audit purposes",
         }
-        
-    def get_chat_session_conversations(self, session_id: str, include_deleted: bool = False) -> List[Dict[str, Any]]:
+
+    def get_chat_session_conversations(
+        self, session_id: str, include_deleted: bool = False
+    ) -> List[Dict[str, Any]]:
         """
         Get conversation history for a chat session.
 
@@ -933,13 +939,8 @@ class Manager:
                 return self.chat_sessions[session_id].get("conversation_history", [])
             else:
                 raise ValueError(f"Chat session with ID {session_id} was offloaded or deleted")
-      
-    def chat_session_converse(
-        self,
-        session_id: str,
-        user_message: str,
-        stream: bool = False
-    ):
+
+    def chat_session_converse(self, session_id: str, user_message: str, stream: bool = False):
         """
         Process a user message and generate a response using the session's agent.
         Handles both streaming and non-streaming responses.
@@ -975,17 +976,19 @@ class Manager:
                         "stream": stream,
                         "user_message": user_message,
                         "session_id": session_id,
-                        "entity_id": session_entry.get("entity_id")
+                        "entity_id": session_entry.get("entity_id"),
                     }
                 },
-                upsert=True
+                upsert=True,
             )
 
             # RACE CONDITION FIX: Get agent and initialize history within lock, then prepare transcript
             agent: ResearchAgent
             transcript: List[Dict[str, str]]
             if session_id not in self.chat_sessions:
-                raise ValueError(f"Chat session with ID {session_id} was offloaded or deleted during initialization")
+                raise ValueError(
+                    f"Chat session with ID {session_id} was offloaded or deleted during initialization"
+                )
 
             agent = self.chat_sessions[session_id]["agent"]
 
@@ -997,7 +1000,7 @@ class Manager:
                 "role": "user",
                 "content": user_message,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "task_id": task_id
+                "task_id": task_id,
             }
 
             self.chat_sessions[session_id]["conversation_history"].append(user_message_dict)
@@ -1006,12 +1009,13 @@ class Manager:
             transcript = [
                 {
                     "role": msg["role"] if isinstance(msg["role"], str) else msg["role"].value,
-                    "content": msg["content"]
+                    "content": msg["content"],
                 }
                 for msg in self.chat_sessions[session_id]["conversation_history"]
             ]
 
         if stream:
+
             async def generate() -> AsyncGenerator[Dict[str, Any], None]:
                 full_response = ""
                 try:
@@ -1019,9 +1023,9 @@ class Manager:
                         ResponseRequiredRequest(
                             interaction_type="response_required",
                             response_id=len(transcript),
-                            transcript=transcript
+                            transcript=transcript,
                         ),
-                        None
+                        None,
                     ):
                         if response:
                             # Create streaming response object with metadata
@@ -1049,53 +1053,63 @@ class Manager:
                                     "transfer_number": response.transfer_number,
                                     "task_id": task_id,
                                     "estimated_cost_usd": estimated_cost_usd,
-                                    "services_used": services_used
+                                    "services_used": services_used,
                                 }
 
                                 # CONCURRENT REQUEST FIX: Use per-session lock to serialize response save
                                 with session_lock:
                                     if session_id in self.chat_sessions:
-                                        self.chat_sessions[session_id]["conversation_history"].append(assistant_message_dict)
+                                        self.chat_sessions[session_id][
+                                            "conversation_history"
+                                        ].append(assistant_message_dict)
                                         # Update session last_accessed
-                                        self.chat_sessions[session_id]["last_accessed"] = completed_at
-                                        conversation_history = self.chat_sessions[session_id]["conversation_history"]
+                                        self.chat_sessions[session_id][
+                                            "last_accessed"
+                                        ] = completed_at
+                                        conversation_history = self.chat_sessions[session_id][
+                                            "conversation_history"
+                                        ]
                                     else:
-                                        logger.warning(f"Session {session_id} was offloaded during streaming - saving to storage only")
+                                        logger.warning(
+                                            f"Session {session_id} was offloaded during streaming - saving to storage only"
+                                        )
                                         conversation_history = None
 
                                 self.storage.update_one(
                                     "sessions",
                                     {"_id": session_id},
                                     {"$set": {"last_accessed": completed_at}},
-                                    upsert=True
+                                    upsert=True,
                                 )
                                 self.storage.update_one(
                                     "tasks",
                                     {"_id": task_id},
-                                    {"$set": {
-                                        "completed_at": completed_at
+                                    {
+                                        "$set": {"completed_at": completed_at},
+                                        "$inc": {"estimated_cost_usd": estimated_cost_usd},
                                     },
-                                    "$inc": {
-                                        "estimated_cost_usd": estimated_cost_usd
-                                    }}
                                 )
-                                entity_storage = JSONStorage(session_entry['entity_dir'])
+                                entity_storage = JSONStorage(session_entry["entity_dir"])
                                 entity_storage.update_one(
                                     "sessions",
                                     {"_id": session_id},
-                                    {"$set": {"conversation_history": conversation_history if conversation_history else [assistant_message_dict],
-                                              "last_accessed": completed_at},
-                                     "$inc": {"estimated_cost_usd": estimated_cost_usd}},
-                                    upsert=True
+                                    {
+                                        "$set": {
+                                            "conversation_history": (
+                                                conversation_history
+                                                if conversation_history
+                                                else [assistant_message_dict]
+                                            ),
+                                            "last_accessed": completed_at,
+                                        },
+                                        "$inc": {"estimated_cost_usd": estimated_cost_usd},
+                                    },
+                                    upsert=True,
                                 )
                                 self.storage.update_one(
                                     "entities",
                                     {"_id": session_entry.get("entity_id")},
-                                    {
-                                        "$inc": {
-                                            "estimated_cost_usd": estimated_cost_usd
-                                        }
-                                    }
+                                    {"$inc": {"estimated_cost_usd": estimated_cost_usd}},
                                 )
                 except Exception as e:
                     logger.error(f"Error in stream generation for session {session_id}: {e}")
@@ -1117,14 +1131,20 @@ class Manager:
                     ResponseRequiredRequest(
                         interaction_type="response_required",
                         response_id=len(transcript),
-                        transcript=transcript
+                        transcript=transcript,
                     ),
-                    None
+                    None,
                 ):
                     if response:
-                        final_node_ids = response.node_ids if hasattr(response, 'node_ids') else []
-                        final_relationship_ids = response.relationship_ids if hasattr(response, 'relationship_ids') else []
-                        final_cited_node_ids = response.cited_node_ids if hasattr(response, 'cited_node_ids') else []
+                        final_node_ids = response.node_ids if hasattr(response, "node_ids") else []
+                        final_relationship_ids = (
+                            response.relationship_ids
+                            if hasattr(response, "relationship_ids")
+                            else []
+                        )
+                        final_cited_node_ids = (
+                            response.cited_node_ids if hasattr(response, "cited_node_ids") else []
+                        )
                         transfer_number = response.transfer_number
                         services_used = response.services_used
                         estimated_cost_usd = response.estimated_cost_usd
@@ -1143,7 +1163,7 @@ class Manager:
                     "transfer_number": transfer_number,
                     "task_id": task_id,
                     "estimated_cost_usd": estimated_cost_usd,
-                    "services_used": services_used
+                    "services_used": services_used,
                 }
 
                 # CONCURRENT REQUEST FIX: Use per-session lock to serialize response save
@@ -1151,14 +1171,23 @@ class Manager:
                 conversation_history = None
                 with session_lock:
                     if session_id in self.chat_sessions:
-                        self.chat_sessions[session_id]["conversation_history"].append(assistant_message_dict)
+                        self.chat_sessions[session_id]["conversation_history"].append(
+                            assistant_message_dict
+                        )
                         # Update session last_accessed
                         self.chat_sessions[session_id]["last_accessed"] = completed_at
-                        self.chat_sessions[session_id]["estimated_cost_usd"] = estimated_cost_usd + self.chat_sessions[session_id].get("estimated_cost_usd", 0.0)
+                        self.chat_sessions[session_id]["estimated_cost_usd"] = (
+                            estimated_cost_usd
+                            + self.chat_sessions[session_id].get("estimated_cost_usd", 0.0)
+                        )
                         session_cost = self.chat_sessions[session_id]["estimated_cost_usd"]
-                        conversation_history = self.chat_sessions[session_id]["conversation_history"]
+                        conversation_history = self.chat_sessions[session_id][
+                            "conversation_history"
+                        ]
                     else:
-                        logger.warning(f"Session {session_id} was offloaded during non-streaming response - saving to storage only")
+                        logger.warning(
+                            f"Session {session_id} was offloaded during non-streaming response - saving to storage only"
+                        )
                         session_cost = estimated_cost_usd
                         conversation_history = [assistant_message_dict]
 
@@ -1167,35 +1196,37 @@ class Manager:
                     {"_id": session_id},
                     {
                         "$set": {"last_accessed": completed_at},
-                        "$inc": {"estimated_cost_usd": estimated_cost_usd}
+                        "$inc": {"estimated_cost_usd": estimated_cost_usd},
                     },
-                    upsert=True
+                    upsert=True,
                 )
                 self.storage.update_one(
                     "tasks",
                     {"_id": task_id},
-                    {"$set": {
-                        "completed_at": completed_at,
-                        "estimated_cost_usd": estimated_cost_usd
-                    }},
-                    upsert=True
+                    {
+                        "$set": {
+                            "completed_at": completed_at,
+                            "estimated_cost_usd": estimated_cost_usd,
+                        }
+                    },
+                    upsert=True,
                 )
-                entity_storage = JSONStorage(session_entry['entity_dir'])
+                entity_storage = JSONStorage(session_entry["entity_dir"])
                 entity_storage.update_one(
                     "sessions",
                     {"_id": session_id},
-                    {"$set": {"conversation_history": conversation_history,
-                                "last_accessed": completed_at,
-                                "estimated_cost_usd": session_cost}},
+                    {
+                        "$set": {
+                            "conversation_history": conversation_history,
+                            "last_accessed": completed_at,
+                            "estimated_cost_usd": session_cost,
+                        }
+                    },
                 )
                 self.storage.update_one(
                     "entities",
                     {"_id": session_entry.get("entity_id")},
-                    {
-                        "$inc": {
-                            "estimated_cost_usd": estimated_cost_usd
-                        }
-                    }
+                    {"$inc": {"estimated_cost_usd": estimated_cost_usd}},
                 )
 
                 return {
@@ -1206,7 +1237,7 @@ class Manager:
                     "relationship_ids": final_relationship_ids,
                     "cited_node_ids": final_cited_node_ids,
                     "estimated_cost_usd": estimated_cost_usd,
-                    "services_used": services_used
+                    "services_used": services_used,
                 }
 
             return get_non_streaming_response()
@@ -1268,7 +1299,7 @@ class Manager:
                     "total_chunks": len(chunks_data),
                     "indexed_chunks": 0,
                     "duplicate_chunks": duplicate_count,
-                    "message": f"All {duplicate_count} chunks already exist, no indexing performed"
+                    "message": f"All {duplicate_count} chunks already exist, no indexing performed",
                 }
 
             # Format chunks for vector store (same format as _process_document returns)
@@ -1280,7 +1311,7 @@ class Manager:
                 formatted_chunk = {
                     "chunk": {
                         "text": markdown_content.get("text", ""),
-                        "chunk_order_index": markdown_content.get("chunk_order_index", 0)
+                        "chunk_order_index": markdown_content.get("chunk_order_index", 0),
                     },
                     "metadata": {
                         "chunk_id": chunk_data.get("chunk_id"),
@@ -1290,13 +1321,14 @@ class Manager:
                         "pages": markdown_content.get("pages", [markdown_content.get("page", [0])]),
                         "tokens": chunk_metadata_obj.get("tokens", 0),
                         "processed_by": chunk_metadata_obj.get("processed_by", "ChunkAPI"),
-                        "indexed_at": datetime.now(timezone.utc).isoformat()
-                    }
+                        "indexed_at": datetime.now(timezone.utc).isoformat(),
+                    },
                 }
                 formatted_chunks.append(formatted_chunk)
 
             # Get the RAG manager and add chunks to vector store
-            from .entity_scoped_rag import get_entity_rag_manager
+            from ._entity_scoped_rag import get_entity_rag_manager
+
             rag_manager = get_entity_rag_manager()
 
             # Add chunks using the standard batch method
@@ -1305,14 +1337,16 @@ class Manager:
                 chunks=formatted_chunks,
                 doc_id=doc_id,
                 entity_dir=entity_dir,
-                new_chunks_data=new_chunks_data
+                new_chunks_data=new_chunks_data,
             )
 
             if not result:
                 raise ValueError("Failed to index chunks")
 
             indexed_count = len(new_chunks_data)
-            logger.info(f"Successfully indexed {indexed_count} chunks for doc {doc_id} in entity {entity_id}")
+            logger.info(
+                f"Successfully indexed {indexed_count} chunks for doc {doc_id} in entity {entity_id}"
+            )
 
             return {
                 "success": True,
@@ -1321,7 +1355,7 @@ class Manager:
                 "total_chunks": len(chunks_data),
                 "indexed_chunks": indexed_count,
                 "duplicate_chunks": duplicate_count,
-                "message": f"Ingested {indexed_count} chunks ({duplicate_count} duplicates skipped) for doc {doc_id}"
+                "message": f"Ingested {indexed_count} chunks ({duplicate_count} duplicates skipped) for doc {doc_id}",
             }
 
         except ValueError as ve:
@@ -1352,7 +1386,7 @@ class Manager:
                 "entity_id": entity_id,
                 "doc_id": batch_result["doc_id"],
                 "indexed": batch_result["indexed_chunks"] > 0,
-                "message": batch_result["message"]
+                "message": batch_result["message"],
             }
 
         except Exception as e:
@@ -1376,7 +1410,7 @@ class Manager:
             # Group chunks by doc_id from metadata
             chunks_by_doc: dict[str, list] = {}
             for chunk_data in chunks:
-                doc_id = chunk_data.get('metadata', {}).get('doc_id')
+                doc_id = chunk_data.get("metadata", {}).get("doc_id")
                 if not doc_id:
                     continue
 
@@ -1388,18 +1422,17 @@ class Manager:
             for doc_id, doc_chunks in chunks_by_doc.items():
                 # Sort chunks by chunk_order_index
                 sorted_chunks = sorted(
-                    doc_chunks,
-                    key=lambda x: x.get('chunk', {}).get('chunk_order_index', 0)
+                    doc_chunks, key=lambda x: x.get("chunk", {}).get("chunk_order_index", 0)
                 )
 
                 previous_node_id = None
                 for chunk_data in sorted_chunks:
-                    chunk = chunk_data.get('chunk', {})
-                    metadata_dict = chunk_data.get('metadata', {})
+                    chunk = chunk_data.get("chunk", {})
+                    metadata_dict = chunk_data.get("metadata", {})
 
-                    chunk_order_index = chunk.get('chunk_order_index')
-                    content = chunk.get('text', '')
-                    source = chunk.get('source', '')
+                    chunk_order_index = chunk.get("chunk_order_index")
+                    content = chunk.get("text", "")
+                    source = chunk.get("source", "")
 
                     if chunk_order_index is None:
                         continue
@@ -1411,47 +1444,46 @@ class Manager:
                     if node_id not in node_id_set:
                         node_id_set.add(node_id)
 
-                        nodes.append(KnowledgeGraphNode(
-                            id=node_id,
-                            nodeLabel=content[:10],
-                            properties={
-                                "entity_id": entity_id,
-                                "doc_id": doc_id,
-                                "chunk_order_index": chunk_order_index,
-                                "content": content,
-                                "source": source,
-                                "metadata": metadata_dict
-                            }
-                        ))
+                        nodes.append(
+                            KnowledgeGraphNode(
+                                id=node_id,
+                                nodeLabel=content[:10],
+                                properties={
+                                    "entity_id": entity_id,
+                                    "doc_id": doc_id,
+                                    "chunk_order_index": chunk_order_index,
+                                    "content": content,
+                                    "source": source,
+                                    "metadata": metadata_dict,
+                                },
+                            )
+                        )
 
                     # Create sequential relationship with previous chunk
                     if previous_node_id:
                         relationship_id = f"{previous_node_id}:{node_id}"
                         if relationship_id not in relationship_id_set:
                             relationship_id_set.add(relationship_id)
-                            relationships.append(KnowledgeGraphRelationship(
-                                id=relationship_id,
-                                source=previous_node_id,
-                                target=node_id,
-                                label="sequential",
-                                properties={
-                                    "doc_id": doc_id,
-                                    "entity_id": entity_id
-                                }
-                            ))
+                            relationships.append(
+                                KnowledgeGraphRelationship(
+                                    id=relationship_id,
+                                    source=previous_node_id,
+                                    target=node_id,
+                                    label="sequential",
+                                    properties={"doc_id": doc_id, "entity_id": entity_id},
+                                )
+                            )
 
                     previous_node_id = node_id
 
-        logger.info(f"Generated knowledge graph with {len(nodes)} nodes and {len(relationships)} relationships for entities: {entity_ids}")
+        logger.info(
+            f"Generated knowledge graph with {len(nodes)} nodes and {len(relationships)} relationships for entities: {entity_ids}"
+        )
 
         return KnowledgeGraph(
             nodes=nodes,
             relationships=relationships,
             total_nodes=len(nodes),
             total_relationships=len(relationships),
-            entity_ids=entity_ids
+            entity_ids=entity_ids,
         )
-                    
-        
-        
-        

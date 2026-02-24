@@ -10,37 +10,40 @@ import json
 import uuid
 from pathlib import Path
 import tempfile
+from typing import Dict, List, Any
+import traceback
+import time
 
 API_BASE_URL = "http://localhost:8002"
+
 
 def create_entity(entity_id: str, entity_name: str):
     """Create a test entity"""
     url = f"{API_BASE_URL}/api/entities"
-    payload = {
-        "entity_id": entity_id,
-        "entity_name": entity_name,
-        "description": "Test entity"
-    }
+    payload = {"entity_id": entity_id, "entity_name": entity_name, "description": "Test entity"}
     response = requests.post(url, json=payload)
     response.raise_for_status()
     return response.json()
 
-def ingest_chunks_batch(entity_id: str, chunks: list):
+
+def ingest_chunks_batch(entity_id: str, chunks: List[Dict[str, Any]]):
     """Batch ingest chunks"""
     url = f"{API_BASE_URL}/api/entities/{entity_id}/chunks/batch"
-    payload = {"chunks": chunks}
+    payload: Dict[str, List[Dict[str, Any]]] = {"chunks": chunks}
     response = requests.post(url, json=payload)
     response.raise_for_status()
     return response.json()
+
 
 def upload_file(entity_id: str, file_path: str):
     """Upload a file"""
     url = f"{API_BASE_URL}/api/entities/{entity_id}/files"
-    with open(file_path, 'rb') as f:
+    with open(file_path, "rb") as f:
         files = {"file": (Path(file_path).name, f)}
         response = requests.post(url, files=files)
     response.raise_for_status()
     return response.json()
+
 
 def get_task_status(task_id: str):
     """Get task status"""
@@ -49,6 +52,7 @@ def get_task_status(task_id: str):
     response.raise_for_status()
     return response.json()
 
+
 def list_files(entity_id: str):
     """List files for entity"""
     url = f"{API_BASE_URL}/api/entities/{entity_id}/files"
@@ -56,7 +60,8 @@ def list_files(entity_id: str):
     response.raise_for_status()
     return response.json()
 
-def create_chunk(chunk_id: str, chunk_order_index: int, text: str, doc_id: str):
+
+def create_chunk(chunk_id: str, chunk_order_index: int, text: str, doc_id: str) -> Dict[str, Any]:
     """Helper to create a chunk object"""
     return {
         "chunk_id": chunk_id,
@@ -65,16 +70,17 @@ def create_chunk(chunk_id: str, chunk_order_index: int, text: str, doc_id: str):
             "chunk_order_index": chunk_order_index,
             "source": f"entity_{doc_id}",
             "filename": "test.pdf",
-            "pages": [chunk_order_index + 1]
+            "pages": [chunk_order_index + 1],
         },
         "metadata": {
             "chunk_index": chunk_order_index,
             "tokens": len(text.split()),
             "processed_by": "TestBatch",
             "doc_id": doc_id,
-            "entity_id": "test_entity"
-        }
+            "entity_id": "test_entity",
+        },
     }
+
 
 def main():
     print("=" * 80)
@@ -108,8 +114,8 @@ def main():
         files = list_files(entity_id)
         print(f"✓ Files response: {json.dumps(files, indent=2)}")
 
-        if isinstance(files, dict) and 'documents' in files:
-            doc_count = len(files.get('documents', []))
+        if isinstance(files, dict) and "documents" in files:  # type: ignore
+            doc_count = len(files.get("documents", []))
             print(f"  → Document count: {doc_count}")
             if doc_count == 0:
                 print("  ✓ CORRECT: No document entry created for chunk API ingestion")
@@ -120,29 +126,29 @@ def main():
 
         # 4. Upload a real file
         print("\n[4] Uploading a test file...")
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write("This is a test document with some content for file upload testing.")
             temp_file = f.name
 
         try:
             upload_result = upload_file(entity_id, temp_file)
-            task_id = upload_result.get('task_id')
+            task_id = upload_result.get("task_id")
             print(f"✓ File upload started with task_id: {task_id}")
 
             # Wait for task to complete
             print("\n[5] Waiting for file processing...")
-            import time
+
             max_attempts = 30
             attempt = 0
             while attempt < max_attempts:
                 task_status = get_task_status(task_id)
-                status = task_status.get('status')
+                status = task_status.get("status")
                 print(f"  Task status: {status}")
 
-                if status == 'completed':
+                if status == "completed":
                     print(f"✓ File processing completed")
                     break
-                elif status == 'failed':
+                elif status == "failed":
                     print(f"✗ File processing failed")
                     break
 
@@ -151,11 +157,11 @@ def main():
 
             # Check files list - should NOW show a document entry
             print("\n[6] Checking files list after file upload...")
-            files = list_files(entity_id)
+            files: Dict[str, Any] = list_files(entity_id)
             print(f"✓ Files response: {json.dumps(files, indent=2)}")
 
-            if isinstance(files, dict) and 'documents' in files:
-                doc_count = len(files.get('documents', []))
+            if isinstance(files, dict) and "documents" in files:  # type: ignore
+                doc_count = len(files.get("documents", []))
                 print(f"  → Document count: {doc_count}")
                 if doc_count > 0:
                     print("  ✓ CORRECT: Document entry created for file upload")
@@ -174,9 +180,10 @@ def main():
 
     except Exception as e:
         print(f"\n✗ Error: {e}")
-        import traceback
+
         traceback.print_exc()
         return False
+
 
 if __name__ == "__main__":
     success = main()

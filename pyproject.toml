@@ -1,0 +1,230 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentic-rag"
+version = "1.0.0"
+description = "A high-performance, production-ready Retrieval-Augmented Generation (RAG) system with entity-scoped isolation, JSON storage, and complete REST API"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Prabhath Chellingi", email = "prabhathchellingi2003@gmail.com"}
+]
+keywords = [
+    "rag",
+    "retrieval-augmented-generation",
+    "fastapi",
+    "entity-scoped",
+    "vector-search",
+    "faiss",
+    "llm",
+    "generative-ai"
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Web Environment",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+requires-python = ">=3.10"
+
+dependencies = [
+    "aiohttp==3.12.15",
+    "aiosignal==1.4.0",
+    "aiosqlite==0.21.0",
+    "annotated-types==0.7.0",
+    "anyio==4.11.0",
+    "async-timeout==4.0.3",
+    "attrs==25.3.0",
+    "boto3==1.40.44",
+    "botocore==1.40.44",
+    "certifi==2025.8.3",
+    "charset-normalizer==3.4.3",
+    "click==8.3.0",
+    "colorama==0.4.6",
+    "dataclasses-json==0.6.7",
+    "Deprecated==1.2.18",
+    "dirtyjson==1.0.8",
+    "distro==1.9.0",
+    "dnspython==2.8.0",
+    "exceptiongroup==1.3.0",
+    "faiss-gpu==1.7.2",
+    "fastapi==0.118.0",
+    "filelock==3.19.1",
+    "filetype==1.2.0",
+    "frozenlist==1.7.0",
+    "fsspec==2025.9.0",
+    "greenlet==3.2.4",
+    "griffe==1.14.0",
+    "h11==0.16.0",
+    "httpcore==1.0.9",
+    "httptools==0.6.4",
+    "httpx==0.28.1",
+    "httpx-sse==0.4.1",
+    "huggingface-hub==0.35.3",
+    "idna==3.10",
+    "iniconfig==2.1.0",
+    "Jinja2==3.1.6",
+    "jiter==0.11.0",
+    "jmespath==1.0.1",
+    "joblib==1.5.2",
+    "jsonpatch==1.33",
+    "jsonpointer==3.0.0",
+    "langchain==0.3.27",
+    "langchain-community==0.3.30",
+    "langchain-core==0.3.76",
+    "langchain-huggingface==0.3.1",
+    "langchain-text-splitters==0.3.11",
+    "langsmith==0.4.31",
+    "limits==5.6.0",
+    "llama-cloud==0.1.42",
+    "llama-cloud-services==0.6.69",
+    "llama-index-core==0.14.3",
+    "llama-index-instrumentation==0.4.1",
+    "llama-index-workflows==2.6.0",
+    "llama-parse==0.6.69",
+    "MarkupSafe==3.0.3",
+    "marshmallow==3.26.1",
+    "mpmath==1.3.0",
+    "multidict==6.6.4",
+    "mypy_extensions==1.1.0",
+    "nest-asyncio==1.6.0",
+    "networkx==3.4.2",
+    "nltk==3.9.2",
+    "numpy==1.26.4",
+    "openai==2.1.0",
+    "orjson==3.11.3",
+    "packaging==25.0",
+    "pillow==11.3.0",
+    "platformdirs==4.4.0",
+    "pluggy==1.6.0",
+    "propcache==0.3.2",
+    "psutil==7.1.0",
+    "pydantic==2.11.9",
+    "pydantic-settings==2.11.0",
+    "pydantic_core==2.33.2",
+    "Pygments==2.19.2",
+    "pymongo==4.15.1",
+    "python-dateutil==2.9.0.post0",
+    "python-dotenv==1.1.1",
+    "python-multipart==0.0.20",
+    "PyYAML==6.0.3",
+    "regex==2025.9.18",
+    "reportlab==4.4.4",
+    "requests==2.32.5",
+    "requests-toolbelt==1.0.0",
+    "s3transfer==0.14.0",
+    "safetensors==0.6.2",
+    "scikit-learn==1.7.2",
+    "scipy==1.15.3",
+    "sentence-transformers==5.1.1",
+    "six==1.17.0",
+    "slowapi==0.1.9",
+    "sniffio==1.3.1",
+    "SQLAlchemy==2.0.43",
+    "starlette==0.48.0",
+    "sympy==1.14.0",
+    "tenacity==9.1.2",
+    "threadpoolctl==3.6.0",
+    "tiktoken==0.11.0",
+    "tokenizers==0.22.1",
+    "tomli==2.2.1",
+    "torch==2.8.0",
+    "tqdm==4.67.1",
+    "transformers==4.56.2",
+    "typing-inspect==0.9.0",
+    "typing-inspection==0.4.2",
+    "typing_extensions==4.15.0",
+    "urllib3==2.5.0",
+    "uvicorn==0.37.0",
+    "uvloop==0.21.0",
+    "watchfiles==1.1.0",
+    "websockets==15.0.1",
+    "wrapt==1.17.3",
+    "yarl==1.20.1",
+    "zstandard==0.25.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.4.2",
+    "pytest-cov>=4.1.0",
+    "black>=23.0.0",
+    "isort>=5.13.0",
+    "flake8>=6.0.0",
+    "mypy>=1.0.0",
+]
+gpu = [
+    "faiss-gpu==1.7.2",
+    "torch==2.8.0",
+]
+docs = [
+    "sphinx>=7.0.0",
+    "sphinx-rtd-theme>=1.3.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Prabhath003/AgenticRAG"
+Repository = "https://github.com/Prabhath003/AgenticRAG.git"
+Documentation = "https://github.com/Prabhath003/AgenticRAG#documentation"
+Issues = "https://github.com/Prabhath003/AgenticRAG/issues"
+
+[tool.setuptools]
+packages = ["src", "src.core", "src.core.agents", "src.infrastructure", "src.infrastructure.storage", "src.infrastructure.file_processor", "src.infrastructure.clients", "src.infrastructure.database", "src.config", "src.utils"]
+
+[tool.setuptools.package-data]
+src = ["**/*.py"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+addopts = "-v --tb=short"
+
+[tool.black]
+line-length = 100
+target-version = ['py310', 'py311', 'py312']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 100
+skip_gitignore = true
+known_first_party = ["src"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+strict_optional = true

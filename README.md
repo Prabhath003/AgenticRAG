@@ -24,6 +24,28 @@ A high-performance, production-ready Retrieval-Augmented Generation (RAG) system
 
 ### 1. Installation
 
+#### Option A: Using pip (Latest Release)
+
+```bash
+pip install agentic-rag
+```
+
+#### Option B: From Source
+
+```bash
+# Clone repository
+git clone https://github.com/Prabhath003/AgenticRAG.git
+cd AgenticRAG
+
+# Install in development mode
+pip install -e .
+
+# Or install with optional dependencies
+pip install -e ".[dev,docs]"
+```
+
+#### Option C: Using requirements.txt
+
 ```bash
 # Clone repository
 git clone https://github.com/Prabhath003/AgenticRAG.git
@@ -267,6 +289,40 @@ AgenticRAG/
 - **Streaming Chat**: Real-time token-by-token responses
 - **Isolated Indexes**: No cross-entity interference
 - **Thread-Safe**: Safe concurrent operations
+
+## 📦 Package Configuration
+
+### Build System
+
+This project uses modern Python packaging with `pyproject.toml`. Key configuration files:
+
+- **`pyproject.toml`**: Main project configuration including:
+  - Project metadata (name, version, description, author)
+  - Dependencies and optional groups (dev, docs, gpu)
+  - Tool configurations (pytest, black, isort, mypy)
+  - Python version requirements (3.10+)
+
+- **`MANIFEST.in`**: Specifies which files to include in source distributions:
+  - Documentation files
+  - Example files
+  - Configuration files
+  - Excludes unnecessary files (.git, .env, cache, data)
+
+### Optional Dependencies
+
+```bash
+# Development tools (testing, linting, formatting)
+pip install -e ".[dev]"
+
+# Documentation tools
+pip install -e ".[docs]"
+
+# GPU support (FAISS-GPU, PyTorch with CUDA)
+pip install -e ".[gpu]"
+
+# All extras
+pip install -e ".[dev,docs,gpu]"
+```
 
 ## ⚙️ Configuration
 

@@ -2,7 +2,7 @@
 # Copyright (c) 2025 Backend
 # All rights reserved.
 #
-# Developed by: 
+# Developed by:
 # Author: Prabhath Chellingi
 # GitHub: https://github.com/Prabhath003
 # Contact: prabhathchellingi2003@gmail.com
@@ -18,9 +18,11 @@ Tests for chunk traversal functions in EntityVectorStore and EntityRAGManager
 import os
 import tempfile
 import pytest
-from pathlib import Path
+from typing import Dict, Any
+from pytest import MonkeyPatch
 
-from src.core.entity_scoped_rag import EntityRAGManager, get_entity_rag_manager
+from src.core import File
+from src.core._entity_scoped_rag import EntityRAGManager
 from src.infrastructure.storage import get_storage_session
 from src.config import Config
 
@@ -35,12 +37,11 @@ def temp_storage_dir():
 @pytest.fixture
 def sample_document():
     """Create a sample text document"""
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
         # Create a document with enough content to generate multiple chunks
-        content = "\n\n".join([
-            f"This is paragraph {i}. " * 50  # Make each paragraph substantial
-            for i in range(10)
-        ])
+        content = "\n\n".join(
+            [f"This is paragraph {i}. " * 50 for i in range(10)]  # Make each paragraph substantial
+        )
         f.write(content)
         temp_path = f.name
 
@@ -52,24 +53,27 @@ def sample_document():
 
 
 @pytest.fixture
-def entity_rag_manager(temp_storage_dir, monkeypatch):
+def entity_rag_manager(temp_storage_dir: str, monkeypatch: MonkeyPatch):
     """Create an EntityRAGManager with temporary storage"""
-    monkeypatch.setattr(Config, 'DATA_DIR', temp_storage_dir)
+    monkeypatch.setattr(Config, "DATA_DIR", temp_storage_dir)
     manager = EntityRAGManager()
     yield manager
     manager.shutdown()
 
 
 @pytest.fixture
-def setup_test_data(entity_rag_manager, sample_document):
+def setup_test_data(entity_rag_manager: EntityRAGManager, sample_document: str) -> Dict[str, Any]:
     """Setup test data with a document and chunks"""
     entity_id = "test_entity_123"
+
+    with open(sample_document, "rb") as f:
+        content = f.read()
 
     # Add document
     result = entity_rag_manager.add_document(
         entity_id=entity_id,
-        file_path=sample_document,
-        metadata={"test": "metadata"}
+        file=File(os.path.basename(sample_document), content),
+        metadata={"test": "metadata"},
     )
 
     assert result is not None
@@ -77,17 +81,15 @@ def setup_test_data(entity_rag_manager, sample_document):
 
     doc_id = result["doc_id"]
 
-    return {
-        "entity_id": entity_id,
-        "doc_id": doc_id,
-        "chunks_count": result["chunks_count"]
-    }
+    return {"entity_id": entity_id, "doc_id": doc_id, "chunks_count": result["chunks_count"]}
 
 
 class TestEntityVectorStoreChunkTraversal:
     """Tests for EntityVectorStore chunk traversal methods"""
 
-    def test_get_chunk_by_id(self, entity_rag_manager, setup_test_data):
+    def test_get_chunk_by_id(
+        self, entity_rag_manager: EntityRAGManager, setup_test_data: Dict[str, Any]
+    ):
         """Test retrieving a specific chunk by ID"""
         data = setup_test_data
         entity_id = data["entity_id"]
@@ -106,7 +108,9 @@ class TestEntityVectorStoreChunkTraversal:
         assert chunk is not None
         assert chunk["chunk"]["chunk_order_index"] == 1
 
-    def test_get_chunk_by_id_not_found(self, entity_rag_manager, setup_test_data):
+    def test_get_chunk_by_id_not_found(
+        self, entity_rag_manager: EntityRAGManager, setup_test_data: Dict[str, Any]
+    ):
         """Test retrieving a non-existent chunk"""
         data = setup_test_data
         entity_id = data["entity_id"]
@@ -118,7 +122,9 @@ class TestEntityVectorStoreChunkTraversal:
         chunk = store.get_chunk_by_id(doc_id, 99999)
         assert chunk is None
 
-    def test_get_previous_chunk(self, entity_rag_manager, setup_test_data):
+    def test_get_previous_chunk(
+        self, entity_rag_manager: EntityRAGManager, setup_test_data: Dict[str, Any]
+    ):
         """Test getting the previous chunk"""
         data = setup_test_data
         entity_id = data["entity_id"]
@@ -135,7 +141,9 @@ class TestEntityVectorStoreChunkTraversal:
         prev_chunk = store.get_previous_chunk(doc_id, 0)
         assert prev_chunk is None
 
-    def test_get_next_chunk(self, entity_rag_manager, setup_test_data):
+    def test_get_next_chunk(
+        self, entity_rag_manager: EntityRAGManager, setup_test_data: Dict[str, Any]
+    ):
         """Test getting the next chunk"""
         data = setup_test_data
         entity_id = data["entity_id"]
@@ -153,7 +161,9 @@ class TestEntityVectorStoreChunkTraversal:
         next_chunk = store.get_next_chunk(doc_id, chunks_count - 1)
         assert next_chunk is None
 
-    def test_get_chunk_context(self, entity_rag_manager, setup_test_data):
+    def test_get_chunk_context(
+        self, entity_rag_manager: EntityRAGManager, setup_test_data: Dict[str, Any]
+    ):
         """Test getting chunk with context"""
         data = setup_test_data
         entity_id = data["entity_id"]
@@ -173,7 +183,9 @@ class TestEntityVectorStoreChunkTraversal:
         assert len(context["after"]) == 1
         assert context["after"][0]["chunk"]["chunk_order_index"] == 3
 
-    def test_get_chunk_context_larger_window(self, entity_rag_manager, setup_test_data):
+    def test_get_chunk_context_larger_window(
+        self, entity_rag_manager: EntityRAGManager, setup_test_data: Dict[str, Any]
+    ):
         """Test getting chunk with larger context window"""
         data = setup_test_data
         entity_id = data["entity_id"]
@@ -192,7 +204,9 @@ class TestEntityVectorStoreChunkTraversal:
         assert context["before"][0]["chunk"]["chunk_order_index"] == 1
         assert context["before"][1]["chunk"]["chunk_order_index"] == 2
 
-    def test_get_chunk_context_at_boundaries(self, entity_rag_manager, setup_test_data):
+    def test_get_chunk_context_at_boundaries(
+        self, entity_rag_manager: EntityRAGManager, setup_test_data: Dict[str, Any]
+    ):
         """Test chunk context at document boundaries"""
         data = setup_test_data
         entity_id = data["entity_id"]
@@ -206,7 +220,9 @@ class TestEntityVectorStoreChunkTraversal:
         assert len(context["before"]) == 0  # No chunks before
         assert len(context["after"]) >= 1
 
-    def test_get_document_chunks_in_order(self, entity_rag_manager, setup_test_data):
+    def test_get_document_chunks_in_order(
+        self, entity_rag_manager: EntityRAGManager, setup_test_data: Dict[str, Any]
+    ):
         """Test retrieving all chunks in order"""
         data = setup_test_data
         entity_id = data["entity_id"]
@@ -223,7 +239,9 @@ class TestEntityVectorStoreChunkTraversal:
         for i, chunk in enumerate(chunks):
             assert chunk["chunk"]["chunk_order_index"] == i
 
-    def test_get_chunk_neighbors(self, entity_rag_manager, setup_test_data):
+    def test_get_chunk_neighbors(
+        self, entity_rag_manager: EntityRAGManager, setup_test_data: Dict[str, Any]
+    ):
         """Test getting neighboring chunks"""
         data = setup_test_data
         entity_id = data["entity_id"]
@@ -241,7 +259,9 @@ class TestEntityVectorStoreChunkTraversal:
         indices = [chunk["chunk"]["chunk_order_index"] for chunk in neighbors]
         assert indices == [1, 2, 3, 4, 5]
 
-    def test_get_chunk_neighbors_at_boundary(self, entity_rag_manager, setup_test_data):
+    def test_get_chunk_neighbors_at_boundary(
+        self, entity_rag_manager: EntityRAGManager, setup_test_data: Dict[str, Any]
+    ):
         """Test getting neighbors at document boundary"""
         data = setup_test_data
         entity_id = data["entity_id"]
@@ -262,84 +282,72 @@ class TestEntityVectorStoreChunkTraversal:
 class TestEntityRAGManagerChunkTraversal:
     """Tests for EntityRAGManager chunk traversal methods"""
 
-    def test_manager_get_chunk_by_id(self, entity_rag_manager, setup_test_data):
+    def test_manager_get_chunk_by_id(
+        self, entity_rag_manager: EntityRAGManager, setup_test_data: Dict[str, Any]
+    ):
         """Test manager's get_chunk_by_id method"""
         data = setup_test_data
 
-        chunk = entity_rag_manager.get_chunk_by_id(
-            data["entity_id"],
-            data["doc_id"],
-            0
-        )
+        chunk = entity_rag_manager.get_chunk_by_id(data["entity_id"], data["doc_id"], 0)
 
         assert chunk is not None
         assert chunk["chunk"]["chunk_order_index"] == 0
 
-    def test_manager_get_previous_chunk(self, entity_rag_manager, setup_test_data):
+    def test_manager_get_previous_chunk(
+        self, entity_rag_manager: EntityRAGManager, setup_test_data: Dict[str, Any]
+    ):
         """Test manager's get_previous_chunk method"""
         data = setup_test_data
 
-        prev_chunk = entity_rag_manager.get_previous_chunk(
-            data["entity_id"],
-            data["doc_id"],
-            2
-        )
+        prev_chunk = entity_rag_manager.get_previous_chunk(data["entity_id"], data["doc_id"], 2)
 
         assert prev_chunk is not None
         assert prev_chunk["chunk"]["chunk_order_index"] == 1
 
-    def test_manager_get_next_chunk(self, entity_rag_manager, setup_test_data):
+    def test_manager_get_next_chunk(
+        self, entity_rag_manager: EntityRAGManager, setup_test_data: Dict[str, Any]
+    ):
         """Test manager's get_next_chunk method"""
         data = setup_test_data
 
-        next_chunk = entity_rag_manager.get_next_chunk(
-            data["entity_id"],
-            data["doc_id"],
-            0
-        )
+        next_chunk = entity_rag_manager.get_next_chunk(data["entity_id"], data["doc_id"], 0)
 
         assert next_chunk is not None
         assert next_chunk["chunk"]["chunk_order_index"] == 1
 
-    def test_manager_get_chunk_context(self, entity_rag_manager, setup_test_data):
+    def test_manager_get_chunk_context(
+        self, entity_rag_manager: EntityRAGManager, setup_test_data: Dict[str, Any]
+    ):
         """Test manager's get_chunk_context method"""
         data = setup_test_data
 
         context = entity_rag_manager.get_chunk_context(
-            data["entity_id"],
-            data["doc_id"],
-            2,
-            context_size=1
+            data["entity_id"], data["doc_id"], 2, context_size=1
         )
 
         assert context["current"] is not None
         assert len(context["before"]) == 1
         assert len(context["after"]) >= 1
 
-    def test_manager_get_document_chunks_in_order(self, entity_rag_manager, setup_test_data):
+    def test_manager_get_document_chunks_in_order(
+        self, entity_rag_manager: EntityRAGManager, setup_test_data: Dict[str, Any]
+    ):
         """Test manager's get_document_chunks_in_order method"""
         data = setup_test_data
 
-        chunks = entity_rag_manager.get_document_chunks_in_order(
-            data["entity_id"],
-            data["doc_id"]
-        )
+        chunks = entity_rag_manager.get_document_chunks_in_order(data["entity_id"], data["doc_id"])
 
         assert len(chunks) == data["chunks_count"]
-        assert all(
-            chunks[i]["chunk"]["chunk_order_index"] == i
-            for i in range(len(chunks))
-        )
+        assert all(chunks[i]["chunk"]["chunk_order_index"] == i for i in range(len(chunks)))
 
-    def test_manager_get_chunk_neighbors(self, entity_rag_manager, setup_test_data):
+    def test_manager_get_chunk_neighbors(
+        self, entity_rag_manager: EntityRAGManager, setup_test_data: Dict[str, Any]
+    ):
         """Test manager's get_chunk_neighbors method"""
         data = setup_test_data
 
         neighbors = entity_rag_manager.get_chunk_neighbors(
-            data["entity_id"],
-            data["doc_id"],
-            2,
-            window_size=1
+            data["entity_id"], data["doc_id"], 2, window_size=1
         )
 
         assert len(neighbors) >= 2  # At least chunk 1, 2, 3
@@ -350,7 +358,9 @@ class TestEntityRAGManagerChunkTraversal:
 class TestEntityScopedChunkStorage:
     """Tests for entity-scoped chunk storage"""
 
-    def test_chunks_stored_in_entity_collection(self, entity_rag_manager, setup_test_data):
+    def test_chunks_stored_in_entity_collection(
+        self, entity_rag_manager: EntityRAGManager, setup_test_data: Dict[str, Any]
+    ):
         """Test that chunks are stored in entity-scoped collections"""
         data = setup_test_data
         entity_id = data["entity_id"]
@@ -364,19 +374,26 @@ class TestEntityScopedChunkStorage:
 
         # Verify chunks exist in the collection
         with get_storage_session() as db:
-            chunk_count = db[expected_collection].count_documents(
-                {"metadata.doc_id": doc_id}
-            )
+            chunk_count = db[expected_collection].count_documents({"metadata.doc_id": doc_id})
             assert chunk_count == data["chunks_count"]
 
-    def test_multiple_entities_separate_collections(self, entity_rag_manager, sample_document):
+    def test_multiple_entities_separate_collections(
+        self, entity_rag_manager: EntityRAGManager, sample_document: str
+    ):
         """Test that different entities have separate chunk collections"""
         entity1 = "entity_001"
         entity2 = "entity_002"
 
+        with open(sample_document, "rb") as f:
+            content = f.read()
+
         # Add same document to two entities
-        result1 = entity_rag_manager.add_document(entity1, sample_document)
-        result2 = entity_rag_manager.add_document(entity2, sample_document)
+        result1 = entity_rag_manager.add_document(
+            entity1, File(os.path.basename(sample_document), content)
+        )
+        result2 = entity_rag_manager.add_document(
+            entity2, File(os.path.basename(sample_document), content)
+        )
 
         assert result1 is not None
         assert result2 is not None
@@ -396,7 +413,9 @@ class TestEntityScopedChunkStorage:
             assert count1 == result1["chunks_count"]
             assert count2 == result2["chunks_count"]
 
-    def test_chunk_deletion_entity_scoped(self, entity_rag_manager, setup_test_data):
+    def test_chunk_deletion_entity_scoped(
+        self, entity_rag_manager: EntityRAGManager, setup_test_data: Dict[str, Any]
+    ):
         """Test that chunk deletion is entity-scoped"""
         data = setup_test_data
         entity_id = data["entity_id"]
