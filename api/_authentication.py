@@ -30,6 +30,25 @@ from src.core.models.core_models import DatabaseBaseModel
 security = HTTPBearer(auto_error=False)
 
 
+def _hash_api_key(api_key: str) -> str:
+    """Hash API key using PBKDF2 (NIST-approved key derivation function).
+
+    Args:
+        api_key: The raw API key to hash
+
+    Returns:
+        Hex-encoded hash suitable for secure storage
+    """
+    # PBKDF2 with SHA-256, 480000 iterations (NIST recommendation as of 2023)
+    hash_obj = hashlib.pbkdf2_hmac(
+        "sha256",
+        api_key.encode("utf-8"),
+        b"agentic-rag-api-key",  # Salt: fixed but can be changed
+        480000,  # Iterations (high computational cost for brute-force resistance)
+    )
+    return hash_obj.hex()
+
+
 class Role(StrEnum):
     ADMIN = "admin"
     USER = "user"
@@ -65,10 +84,10 @@ class APIKey(DatabaseBaseModel):
         Returns:
             APIKey instance with masked_api_key and api_hash populated
         """
-        # Create masked version (show last 4 characters)
-        masked = f"{api_key[:8]}{'*' * max(0, len(api_key) - 4)}"
-        # Create SHA256 hash of the API key
-        api_hash = hashlib.sha256(api_key.encode()).hexdigest()
+        # Create masked version (show first 8 and last 4 characters)
+        masked = f"{api_key[:8]}{'*' * max(0, len(api_key) - 12)}{api_key[-4:]}"
+        # Hash using PBKDF2 (NIST-approved key derivation function)
+        api_hash = _hash_api_key(api_key)
         return cls(masked_api_key=masked, user_id=user_id, api_hash=api_hash, role=role)
 
 
@@ -82,7 +101,7 @@ async def verify_api_key(
         raise HTTPException(status_code=401, detail="Authorization header required")
 
     api_key = authorization.credentials
-    api_hash = hashlib.sha256(api_key.encode()).hexdigest()
+    api_hash = _hash_api_key(api_key)
 
     # use connection pool
     with get_db_session() as db:
@@ -101,7 +120,7 @@ async def verify_api_key_header(x_api_key: Optional[str] = Header(None)):
     if not x_api_key:
         raise HTTPException(status_code=401, detail="X-API-Key header required")
 
-    api_hash = hashlib.sha256(x_api_key.encode()).hexdigest()
+    api_hash = _hash_api_key(x_api_key)
 
     # Check if API key exists in database:
     with get_db_session() as db:
@@ -122,7 +141,7 @@ def verify_api_key_direct(api_key: str) -> bool:
     if not api_key:
         raise HTTPException(status_code=401, detail="API key required")
 
-    api_hash = hashlib.sha256(api_key.encode()).hexdigest()
+    api_hash = _hash_api_key(api_key)
 
     with get_db_session() as db:
         coll = db[Config.API_KEYS_COLLECTION]
@@ -142,7 +161,7 @@ async def verify_admin_api_key(x_api_key: Optional[str] = Header(None)):
     if not x_api_key:
         raise HTTPException(status_code=401, detail="X-API-Key header required")
 
-    api_hash = hashlib.sha256(x_api_key.encode()).hexdigest()
+    api_hash = _hash_api_key(x_api_key)
 
     # Check if API key exists and has admin role
     with get_db_session() as db:
@@ -173,7 +192,7 @@ async def validate_websocket_api_key(websocket: WebSocket) -> str:
 
     try:
         # Use the same validation logic as verify_api_key_header
-        api_hash = hashlib.sha256(api_key.encode()).hexdigest()
+        api_hash = _hash_api_key(api_key)
 
         # Check if API key exists in database
         with get_db_session() as db:

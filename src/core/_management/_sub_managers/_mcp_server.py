@@ -1,7 +1,6 @@
 from typing import Dict, Any, List, Union
 
-from core.models.core_models import Document
-
+from ...models.core_models import Document
 from ._conversation_manager import ConversationManager
 from ...models._request_models import (
     ExecuteToolRequest,

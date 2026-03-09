@@ -3,11 +3,10 @@
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from datetime import datetime, timezone
-import hashlib
 import secrets
 from typing import List, Dict, Any
 
-from .._authentication import verify_admin_api_key, APIKey, User
+from .._authentication import verify_admin_api_key, APIKey, User, _hash_api_key
 from .._models import (
     GenerateAPIKeyRequest,
     ListAPIKeysRequest,
@@ -95,7 +94,7 @@ async def get_api_keys(request: ListAPIKeysRequest, api_hash: str = Depends(veri
 
 @router.post("/api_keys/delete", tags=["api_key"])
 async def delete_api_keys(
-    request: DeleteAPIKeysRequest, api_hash: str = Depends(verify_admin_api_key)
+    request: DeleteAPIKeysRequest, admin_api_hash: str = Depends(verify_admin_api_key)
 ):
     """Delete API keys by their values. Only accessible by admin role keys.
 
@@ -105,7 +104,7 @@ async def delete_api_keys(
     deleted_keys: List[str] = []
     with get_db_session() as db:
         for api_key in request.api_keys:
-            api_hash = hashlib.sha256(api_key.encode()).hexdigest()
+            api_hash = _hash_api_key(api_key)
             result = db[Config.API_KEYS_COLLECTION].delete_one({"api_hash": api_hash})
             if result.deleted_count > 0:
                 deleted_keys.append(api_key)
