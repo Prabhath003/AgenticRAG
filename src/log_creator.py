@@ -29,24 +29,6 @@ Each log entry includes:
 - Log message
 """
 
-"""
-Logging utility for the Gmail Connector application.
-
-Provides modular loggers that write detailed logs into rotating files,
-automatically named based on the calling file, its directory, or a user-specified name.
-
-Log files are saved in the `logs/` directory with preserved directory structure
-(e.g., src/core/agent.py -> logs/src/core/agent.log) and rotate after reaching 100 MB (up to 5 backups).
-
-Each log entry includes:
-- Timestamp
-- Log level (DEBUG, INFO, etc.)
-- Logger name
-- Filename and line number
-- Function name
-- Log message
-"""
-
 import os
 import logging
 from logging.handlers import RotatingFileHandler
@@ -60,6 +42,7 @@ import sys
 _ROOT_LOGGER_CONFIGURED = False
 # Console logging with Rich formatting
 _console_logger = None
+USE_RICH_HANDLER = True
 
 
 def _configure_root_logger():
@@ -275,9 +258,9 @@ def get_console_logger():
     # Clear any existing handlers
     _console_logger.handlers.clear()
 
-    if RichHandler:
+    if USE_RICH_HANDLER:
         # Use RichHandler for colored output
-        handler = RichHandler(rich_tracebacks=True, markup=False)
+        handler: logging.Handler = RichHandler(rich_tracebacks=True, markup=False)
     else:
         # Fallback to standard StreamHandler
         handler = logging.StreamHandler()

@@ -147,6 +147,14 @@ class DynamicThreadPool:
 
 executor = DynamicThreadPool(min_workers=MIN_WORKERS, max_workers=MAX_WORKERS)
 
+# Separate executor for nested parallel work (chunk processing inside build_bases)
+# Uses a larger pool to avoid deadlock when multiple build_bases tasks are running
+# and each tries to submit chunk_documents_by_source tasks
+chunk_executor = DynamicThreadPool(
+    min_workers=max(MIN_WORKERS, MAX_WORKERS // 2),
+    max_workers=max(MAX_WORKERS * 2, MAX_WORKERS + 4),  # Extra capacity for nested parallelism
+)
+
 
 def calculate_optimal_workers(cpu_util: float, queue_size: int = 0) -> int:
     """

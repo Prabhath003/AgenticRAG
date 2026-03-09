@@ -11,20 +11,14 @@
 # in the root directory of this source tree.
 # -----------------------------------------------------------------------------
 
-"""Storage module for JSON-based data persistence"""
+"""Storage module for JSON-based data persistence and vector indexing"""
 
-from ._json_storage import (
-    JSONStorage,
-    JSONStorageSession,
-    JSONCollection,
-    get_storage,
-    get_storage_session,
-)
+from ._s3_service import S3Service, get_s3_service
+from ._chromadb_store import ChromaDBStore, get_chromadb_store
 
 __all__ = [
-    "JSONStorage",
-    "JSONStorageSession",
-    "JSONCollection",
-    "get_storage",
-    "get_storage_session",
+    "S3Service",
+    "get_s3_service",
+    "ChromaDBStore",
+    "get_chromadb_store",
 ]

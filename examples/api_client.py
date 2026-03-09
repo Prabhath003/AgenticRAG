@@ -1,649 +1,904 @@
 """
-Simple API Client for Entity-Scoped RAG System
+Comprehensive Python client for AgenticRAG API.
+
+Supports all endpoints including:
+- Health checks
+- Admin operations (users, API keys)
+- Knowledge base management
+- Document operations
+- Conversation management
+- MCP server operations
+- Operation tracking
 """
 
 import requests
-import time
-from typing import Optional, List, Dict, Any, Tuple
+import json
+from typing import Optional, List, Dict, Any, Generator
 from pathlib import Path
-from dataclasses import dataclass
+import asyncio
+import websockets
+from urllib.parse import urljoin
 
 
-@dataclass
-class File:
-    filename: str
-    content: bytes
+class APIClientError(Exception):
+    """Base exception for API client errors."""
+
+    pass
 
 
-class RAGClient:
-    """Simple client for Entity-Scoped RAG API"""
+class APIClient:
+    """Comprehensive client for AgenticRAG API."""
 
-    def __init__(self, base_url: str = "http://localhost:8002", poll_interval: float = 2.0):
+    def __init__(self, base_url: str = "http://localhost:8000", api_key: str = ""):
         """
-        Initialize RAG client
+        Initialize API client.
 
         Args:
             base_url: Base URL of the API server
-            poll_interval: How often to poll for task status in seconds (default: 2.0)
+            api_key: API key for authentication
         """
         self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
         self.session = requests.Session()
-        self.poll_interval = poll_interval
+        self._setup_headers()
 
-    # Entity Management
-    def create_entity(
+    def _setup_headers(self):
+        """Setup default headers with API key."""
+        self.session.headers.update(
+            {
+                "X-API-Key": self.api_key,
+                "Content-Type": "application/json",
+            }
+        )
+
+    def set_api_key(self, api_key: str):
+        """Update API key."""
+        self.api_key = api_key
+        self.session.headers["X-API-Key"] = api_key
+
+    def _make_request(
         self,
-        entity_id: str,
-        entity_name: str,
+        method: str,
+        endpoint: str,
+        data: Optional[Dict[str, Any]] = None,
+        json_data: Optional[Dict[str, Any]] = None,
+        files: Optional[Dict[str, Any]] = None,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Make HTTP request to API.
+
+        Args:
+            method: HTTP method (GET, POST, PUT, DELETE)
+            endpoint: API endpoint path
+            data: Form data
+            json_data: JSON body data
+            files: Files to upload
+            params: Query parameters
+
+        Returns:
+            Response data as dictionary
+
+        Raises:
+            APIClientError: If request fails
+        """
+        url = urljoin(self.base_url, endpoint)
+
+        try:
+            if files:
+                # Don't set Content-Type when uploading files (let requests handle it)
+                headers = dict(self.session.headers)
+                headers.pop("Content-Type", None)
+                response = self.session.request(
+                    method, url, files=files, data=data, params=params, headers=headers
+                )
+            else:
+                response = self.session.request(
+                    method,
+                    url,
+                    json=json_data,
+                    data=data,
+                    params=params,
+                )
+
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            raise APIClientError(f"Request failed: {str(e)}")
+
+    def _make_streaming_request(
+        self, method: str, endpoint: str, json_data: Optional[Dict[str, Any]] = None
+    ) -> Generator[str, None, None]:
+        """
+        Make streaming HTTP request (SSE).
+
+        Args:
+            method: HTTP method
+            endpoint: API endpoint path
+            json_data: JSON body data
+
+        Yields:
+            Streaming response lines
+        """
+        url = urljoin(self.base_url, endpoint)
+
+        try:
+            response = self.session.request(method, url, json=json_data, stream=True)
+            response.raise_for_status()
+
+            for line in response.iter_lines():
+                if line:
+                    yield line.decode("utf-8")
+        except requests.exceptions.RequestException as e:
+            raise APIClientError(f"Streaming request failed: {str(e)}")
+
+    # =========================================================================
+    # HEALTH ENDPOINTS
+    # =========================================================================
+
+    def health_check(self) -> Dict[str, Any]:
+        """
+        Health check endpoint.
+
+        Returns:
+            Health status response
+        """
+        return self._make_request("GET", "/health")
+
+    # =========================================================================
+    # ADMIN ENDPOINTS
+    # =========================================================================
+
+    def generate_api_key(self, user_id: str, role: str = "user") -> Dict[str, Any]:
+        """
+        Generate a new API key (requires admin role).
+
+        Args:
+            user_id: User ID to generate key for
+            role: Role for the key ("user" or "admin")
+
+        Returns:
+            Response with generated API key
+        """
+        return self._make_request(
+            "POST",
+            "/admin/api_keys/generate",
+            json_data={"user_id": user_id, "role": role},
+        )
+
+    def list_api_keys(
+        self,
+        filters: Optional[Dict[str, Any]] = None,
+        projections: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        List API keys (requires admin role).
+
+        Args:
+            filters: MongoDB-style filters
+            projections: MongoDB-style projections
+
+        Returns:
+            List of API keys
+        """
+        return self._make_request(
+            "POST",
+            "/admin/api_keys/list",
+            json_data={
+                "filters": filters or {},
+                "projections": projections or {},
+            },
+        )
+
+    def delete_api_keys(self, api_keys: List[str]) -> Dict[str, Any]:
+        """
+        Delete API keys (requires admin role).
+
+        Args:
+            api_keys: List of API keys to delete
+
+        Returns:
+            Deletion response
+        """
+        return self._make_request(
+            "POST",
+            "/admin/api_keys/delete",
+            json_data={"api_keys": api_keys},
+        )
+
+    def create_user(
+        self, name: Optional[str] = None, email: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Create a new user (requires admin role).
+
+        Args:
+            name: User's full name
+            email: User's email address
+
+        Returns:
+            Created user response
+        """
+        return self._make_request(
+            "POST",
+            "/admin/users/create",
+            json_data={
+                "name": name,
+                "email": email,
+            },
+        )
+
+    def list_users(
+        self,
+        filters: Optional[Dict[str, Any]] = None,
+        projections: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        List users (requires admin role).
+
+        Args:
+            filters: MongoDB-style filters
+            projections: MongoDB-style projections
+
+        Returns:
+            List of users
+        """
+        return self._make_request(
+            "POST",
+            "/admin/users/list",
+            json_data={
+                "filters": filters or {},
+                "projections": projections or {},
+            },
+        )
+
+    def update_user(
+        self, user_id: str, name: Optional[str] = None, email: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Update a user (requires admin role).
+
+        Args:
+            user_id: User ID to update
+            name: New name (optional)
+            email: New email (optional)
+
+        Returns:
+            Updated user response
+        """
+        return self._make_request(
+            "PUT",
+            f"/admin/users/{user_id}",
+            json_data={
+                "name": name,
+                "email": email,
+            },
+        )
+
+    def delete_user(self, user_id: str) -> Dict[str, Any]:
+        """
+        Delete a user (requires admin role).
+
+        Args:
+            user_id: User ID to delete
+
+        Returns:
+            Deletion response
+        """
+        return self._make_request("DELETE", f"/admin/users/{user_id}")
+
+    # =========================================================================
+    # OPERATION ENDPOINTS
+    # =========================================================================
+
+    def get_operation_status(self, operation_id: str) -> Dict[str, Any]:
+        """
+        Get status of an async operation.
+
+        Args:
+            operation_id: Operation ID
+
+        Returns:
+            Operation status
+        """
+        return self._make_request("GET", f"/operation/{operation_id}")
+
+    def list_operations(
+        self,
+        filters: Optional[Dict[str, Any]] = None,
+        projections: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        List operations for the authenticated user.
+
+        Args:
+            filters: MongoDB-style filters
+            projections: MongoDB-style projections
+
+        Returns:
+            List of operations
+        """
+        return self._make_request(
+            "POST",
+            "/operation/list",
+            json_data={
+                "filters": filters or {},
+                "projections": projections or {},
+            },
+        )
+
+    def list_services(
+        self,
+        filters: Optional[Dict[str, Any]] = None,
+        projections: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        List services for the authenticated user.
+
+        Args:
+            filters: MongoDB-style filters
+            projections: MongoDB-style projections
+
+        Returns:
+            List of services
+        """
+        return self._make_request(
+            "POST",
+            "/operation/services/list",
+            json_data={
+                "filters": filters or {},
+                "projections": projections or {},
+            },
+        )
+
+    # =========================================================================
+    # KNOWLEDGE BASE ENDPOINTS
+    # =========================================================================
+
+    def create_knowledge_base(
+        self,
+        title: str,
         description: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Create a new entity"""
-        response = self.session.post(
-            f"{self.base_url}/api/entities",
-            json={
-                "entity_id": entity_id,
-                "entity_name": entity_name,
+        """
+        Create a new knowledge base.
+
+        Args:
+            title: Knowledge base title
+            description: Knowledge base description
+            metadata: Additional metadata
+
+        Returns:
+            Created knowledge base response
+        """
+        return self._make_request(
+            "POST",
+            "/knowledge-base/create",
+            json_data={
+                "title": title,
                 "description": description,
-                "metadata": metadata,
+                "metadata": metadata or {},
             },
         )
-        response.raise_for_status()
-        return response.json()
 
-    def get_entity(self, entity_id: str) -> Dict[str, Any]:
-        """Get entity details"""
-        response = self.session.get(f"{self.base_url}/api/entities/{entity_id}")
-        response.raise_for_status()
-        return response.json()
-
-    def list_entities(self) -> List[Dict[str, Any]]:
-        """List all entities"""
-        response = self.session.get(f"{self.base_url}/api/entities")
-        response.raise_for_status()
-        return response.json()["entities"]
-
-    def delete_entity(self, entity_id: str) -> Dict[str, Any]:
-        """Delete an entity"""
-        response = self.session.delete(f"{self.base_url}/api/entities/{entity_id}")
-        response.raise_for_status()
-        return response.json()
-
-    # File Management
-    def upload_file_async(
-        self,
-        entity_id: str,
-        file_path: str,
-        description: Optional[str] = None,
-        source: Optional[str] = None,
-    ) -> str:
+    def get_knowledge_base(self, kb_id: str) -> Dict[str, Any]:
         """
-        Upload a file asynchronously (returns task_id immediately).
+        Get knowledge base information.
 
         Args:
-            entity_id: Entity identifier
-            file_path: Path to the file to upload
-            description: Optional description
-            source: Optional source identifier
+            kb_id: Knowledge base ID
 
         Returns:
-            Task ID string
-
-        Raises:
-            FileNotFoundError: If file doesn't exist
-            requests.exceptions.RequestException: If API request fails
+            Knowledge base details
         """
-        file_path_obj = Path(file_path)
+        return self._make_request("GET", f"/knowledge-base/{kb_id}")
 
-        if not file_path_obj.exists():
-            raise FileNotFoundError(f"File not found: {file_path}")
-
-        with open(file_path_obj, "rb") as f:
-            files = {"file": (file_path_obj.name, f.read())}
-            data: Dict[str, Any] = {}
-            if description:
-                data["description"] = description
-            if source:
-                data["source"] = source
-
-            response = self.session.post(
-                f"{self.base_url}/api/entities/{entity_id}/files", files=files, data=data
-            )
-
-        response.raise_for_status()
-        result = response.json()
-        return result["task_id"]
-
-    def upload_file(
+    def list_knowledge_bases(
         self,
-        entity_id: str,
-        file_path: str,
-        description: Optional[str] = None,
-        source: Optional[str] = None,
-        wait: bool = True,
-        poll_interval: Optional[float] = None,
+        filters: Optional[Dict[str, Any]] = None,
+        projections: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
-        Upload a file to an entity.
+        List knowledge bases.
 
         Args:
-            entity_id: Entity identifier
-            file_path: Path to the file to upload
-            description: Optional description
-            source: Optional source identifier
-            wait: If True, wait for upload to complete (default: True)
-            poll_interval: Override default poll interval
+            filters: MongoDB-style filters
+            projections: MongoDB-style projections
 
         Returns:
-            If wait=True: Dictionary with upload result and task status
-            If wait=False: Dictionary with task_id and status URL
-
-        Raises:
-            FileNotFoundError: If file doesn't exist
-            requests.exceptions.RequestException: If API request fails
-
-        Example:
-            >>> client = RAGClient()
-            >>> result = client.upload_file("entity_123", "document.pdf", source="docs/2024")
-            >>> print(result['task_id'])
+            List of knowledge bases
         """
-        task_id = self.upload_file_async(entity_id, file_path, description, source)
-
-        if not wait:
-            return {"task_id": task_id, "status_url": f"/tasks/{task_id}"}
-
-        return self.wait_for_upload(task_id, poll_interval=poll_interval)
-
-    def upload_file_from_bytes(
-        self,
-        entity_id: str,
-        file_content: bytes,
-        filename: str,
-        description: Optional[str] = None,
-        source: Optional[str] = None,
-        wait: bool = True,
-        poll_interval: Optional[float] = None,
-    ) -> Dict[str, Any]:
-        """
-        Upload file content from bytes (useful when you already have file in memory).
-
-        Args:
-            entity_id: Entity identifier
-            file_content: File content as bytes
-            filename: Original filename
-            description: Optional description
-            source: Optional source identifier
-            wait: If True, wait for upload to complete (default: True)
-            poll_interval: Override default poll interval
-
-        Returns:
-            If wait=True: Dictionary with upload result and task status
-            If wait=False: Dictionary with task_id and status URL
-
-        Raises:
-            requests.exceptions.RequestException: If API request fails
-
-        Example:
-            >>> with open('document.pdf', 'rb') as f:
-            ...     content = f.read()
-            >>> result = client.upload_file_from_bytes("entity_123", content, 'document.pdf')
-        """
-        files = {"file": (filename, file_content)}
-        data: Dict[str, Any] = {}
-        if description:
-            data["description"] = description
-        if source:
-            data["source"] = source
-
-        response = self.session.post(
-            f"{self.base_url}/api/entities/{entity_id}/files", files=files, data=data
-        )
-
-        response.raise_for_status()
-        result = response.json()
-        task_id = result["task_id"]
-
-        if not wait:
-            return {"task_id": task_id, "status_url": f"/tasks/{task_id}"}
-
-        return self.wait_for_upload(task_id, poll_interval=poll_interval)
-
-    def wait_for_upload(
-        self, task_id: str, poll_interval: Optional[float] = None
-    ) -> Dict[str, Any]:
-        """
-        Wait for an upload task to complete and return the result.
-
-        Args:
-            task_id: The task ID to wait for
-            poll_interval: Override default poll interval
-
-        Returns:
-            Task result when completed
-
-        Raises:
-            requests.exceptions.RequestException: If API request fails
-        """
-        poll_interval = poll_interval or self.poll_interval
-
-        while True:
-            try:
-                # Check task status
-                status = self.get_task_status(task_id)
-                task_status = status.get("status")
-
-                # Check if task is complete
-                if task_status in ["completed", "COMPLETED"]:
-                    return status
-
-                if task_status in ["failed", "FAILED"]:
-                    raise Exception(f"File upload failed: {status.get('error', 'Unknown error')}")
-
-                # Task still processing
-                time.sleep(poll_interval)
-
-            except requests.exceptions.RequestException as e:
-                # Only re-raise connection/network errors
-                if isinstance(
-                    e, (requests.exceptions.ConnectionError, requests.exceptions.Timeout)
-                ):
-                    raise
-                # For other HTTP errors, retry after waiting
-                time.sleep(poll_interval)
-                continue
-
-    def get_task_status(self, task_id: str) -> Dict[str, Any]:
-        """Get upload task status"""
-        response = self.session.get(f"{self.base_url}/api/tasks/{task_id}")
-        response.raise_for_status()
-        return response.json()
-
-    def list_files(self, entity_id: str) -> List[Dict[str, Any]]:
-        """List all files for an entity"""
-        response = self.session.get(f"{self.base_url}/api/entities/{entity_id}/files")
-        response.raise_for_status()
-        return response.json()
-
-    # def delete_file(self, entity_id: str, doc_id: str) -> Dict[str, Any]:
-    #     """Delete a file"""
-    #     response = self.session.delete(
-    #         f"{self.base_url}/api/entities/{entity_id}/files/{doc_id}"
-    #     )
-    #     response.raise_for_status()
-    #     return response.json()
-
-    # Chunk Management (Direct Chunk Ingestion API)
-
-    def ingest_chunk(
-        self,
-        entity_id: str,
-        chunk_id: str,
-        text: str,
-        doc_id: str,
-        chunk_order_index: int = 0,
-        tokens: int = 0,
-        source: Optional[str] = None,
-        filename: Optional[str] = None,
-        pages: Optional[List[int]] = None,
-        processed_by: str = "API",
-    ) -> Dict[str, Any]:
-        """
-        Ingest a single chunk with automatic duplicate detection.
-
-        Args:
-            entity_id: Entity identifier
-            chunk_id: Unique chunk identifier (managed by client)
-            text: Markdown text content of the chunk
-            doc_id: Document ID this chunk belongs to
-            chunk_order_index: Order index of this chunk in the document
-            tokens: Token count of the chunk
-            source: Source identifier (default: entity_id)
-            filename: Original filename (default: 'chunk.txt')
-            pages: List of page numbers (default: [])
-            processed_by: Processor name (default: 'API')
-
-        Returns:
-            Dictionary with chunk_id, doc_id, indexed (bool), and message
-
-        Example:
-            >>> client = RAGClient()
-            >>> result = client.ingest_chunk(
-            ...     entity_id="company_123",
-            ...     chunk_id="chunk_001",
-            ...     text="Company financial overview...",
-            ...     doc_id="doc_abc123"
-            ... )
-            >>> print(f"Indexed: {result['indexed']}")
-        """
-        chunk_data = {
-            "chunk_id": chunk_id,
-            "markdown": {
-                "text": text,
-                "chunk_order_index": chunk_order_index,
-                "source": source or entity_id,
-                "filename": filename or "chunk.txt",
-                "pages": pages or [],
+        return self._make_request(
+            "POST",
+            "/knowledge-bases/list",
+            json_data={
+                "filters": filters or {},
+                "projections": projections or {},
             },
-            "metadata": {
-                "chunk_index": chunk_order_index,
-                "tokens": tokens,
-                "processed_by": processed_by,
-                "doc_id": doc_id,
-                "entity_id": entity_id,
-            },
-        }
-
-        response = self.session.post(
-            f"{self.base_url}/api/entities/{entity_id}/chunks", json=chunk_data
         )
-        response.raise_for_status()
-        return response.json()
 
-    def ingest_chunks_batch(
-        self, entity_id: str, chunks: List[Dict[str, Any]], doc_id: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """
-        Batch ingest multiple chunks with automatic duplicate detection.
-
-        All chunks must belong to the same document (same doc_id).
-
-        Args:
-            entity_id: Entity identifier
-            chunks: List of chunk dictionaries, each containing:
-                - chunk_id: Unique chunk identifier
-                - text: Markdown text content
-                - chunk_order_index: Order in document
-                - tokens: Token count
-                - source: (optional) Source identifier
-                - filename: (optional) Original filename
-                - pages: (optional) Page numbers
-                - processed_by: (optional) Processor name
-            doc_id: Document ID (required if not in chunk metadata)
-
-        Returns:
-            Dictionary with total_chunks, indexed_chunks, duplicate_chunks, and message
-
-        Example:
-            >>> chunks = [
-            ...     {
-            ...         "chunk_id": "chunk_001",
-            ...         "text": "First chunk...",
-            ...         "chunk_order_index": 0,
-            ...         "tokens": 50
-            ...     },
-            ...     {
-            ...         "chunk_id": "chunk_002",
-            ...         "text": "Second chunk...",
-            ...         "chunk_order_index": 1,
-            ...         "tokens": 60
-            ...     }
-            ... ]
-            >>> result = client.ingest_chunks_batch("company_123", chunks, "doc_abc123")
-            >>> print(f"Indexed: {result['indexed_chunks']}, Duplicates: {result['duplicate_chunks']}")
-        """
-        # Format chunks
-        formatted_chunks = []
-        for chunk in chunks:
-            chunk_id = chunk.get("chunk_id")
-            text = chunk.get("text", "")
-            chunk_order_index = chunk.get("chunk_order_index", 0)
-            tokens = chunk.get("tokens", 0)
-            source = chunk.get("source", entity_id)
-            filename = chunk.get("filename", "chunk.txt")
-            pages = chunk.get("pages", [])
-            processed_by = chunk.get("processed_by", "API")
-            chunk_doc_id = chunk.get("doc_id", doc_id)
-
-            if not chunk_id or not chunk_doc_id:
-                raise ValueError("chunk_id and doc_id are required for all chunks")
-
-            formatted_chunk = {
-                "chunk_id": chunk_id,
-                "markdown": {
-                    "text": text,
-                    "chunk_order_index": chunk_order_index,
-                    "source": source,
-                    "filename": filename,
-                    "pages": pages,
-                },
-                "metadata": {
-                    "chunk_index": chunk_order_index,
-                    "tokens": tokens,
-                    "processed_by": processed_by,
-                    "doc_id": chunk_doc_id,
-                    "entity_id": entity_id,
-                },
-            }
-            formatted_chunks.append(formatted_chunk)
-
-        request_data = {"chunks": formatted_chunks}
-
-        response = self.session.post(
-            f"{self.base_url}/api/entities/{entity_id}/chunks/batch", json=request_data
-        )
-        response.raise_for_status()
-        return response.json()
-
-    # Chat Management
-
-    def create_session(
+    def modify_knowledge_base(
         self,
-        entity_id: str,
-        session_name: Optional[str] = None,
+        kb_id: str,
+        title: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        metadata_updates: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Create a chat session"""
-        response = self.session.post(
-            f"{self.base_url}/api/chat/sessions",
-            json={"entity_id": entity_id, "session_name": session_name, "metadata": metadata},
-        )
-        response.raise_for_status()
-        return response.json()
-
-    def get_session(self, session_id: str) -> Dict[str, Any]:
-        """Get session details"""
-        response = self.session.get(f"{self.base_url}/api/chat/sessions/{session_id}")
-        response.raise_for_status()
-        return response.json()
-
-    def list_sessions(self, entity_id: str) -> List[Dict[str, Any]]:
-        """List all sessions for an entity"""
-        response = self.session.get(f"{self.base_url}/api/entities/{entity_id}/sessions")
-        response.raise_for_status()
-        return response.json()
-
-    def delete_session(self, session_id: str) -> Dict[str, Any]:
-        """Delete a session"""
-        response = self.session.delete(f"{self.base_url}/api/chat/sessions/{session_id}")
-        response.raise_for_status()
-        return response.json()
-
-    def get_messages(self, session_id: str) -> List[Dict[str, Any]]:
-        """Get chat history"""
-        response = self.session.get(f"{self.base_url}/api/chat/sessions/{session_id}/messages")
-        response.raise_for_status()
-        return response.json()
-
-    def chat(self, session_id: str, message: str, stream: bool = False) -> Any:
         """
-        Send a chat message
+        Modify a knowledge base.
+
+        Args:
+            kb_id: Knowledge base ID
+            title: New title
+            metadata: New metadata (replaces existing)
+            metadata_updates: Partial metadata updates
 
         Returns:
-            For non-streaming: Dict with 'message' (ChatMessage), 'node_ids', 'relationship_ids', 'cited_node_ids', 'citations'
-            For streaming: Iterator of content
+            Updated knowledge base response
         """
-        response = self.session.post(
-            f"{self.base_url}/api/chat",
-            json={"session_id": session_id, "message": message, "stream": stream},
-            stream=stream,
+        data: Dict[str, Any] = {}
+        if title is not None:
+            data["title"] = title
+        if metadata is not None:
+            data["metadata"] = metadata
+        if metadata_updates is not None:
+            data["metadata_updates"] = metadata_updates
+
+        return self._make_request("PUT", f"/knowledge-base/{kb_id}", json_data=data)
+
+    def delete_knowledge_base(self, kb_id: str) -> Dict[str, Any]:
+        """
+        Delete a knowledge base.
+
+        Args:
+            kb_id: Knowledge base ID
+
+        Returns:
+            Deletion response
+        """
+        return self._make_request("DELETE", f"/knowledge-base/{kb_id}")
+
+    def upload_documents(self, kb_id: str, file_paths: List[str]) -> Dict[str, Any]:
+        """
+        Upload documents to a knowledge base.
+
+        Args:
+            kb_id: Knowledge base ID
+            file_paths: List of file paths to upload
+
+        Returns:
+            Upload response
+        """
+        files: Dict[str, Any] = {}
+        for file_path in file_paths:
+            path = Path(file_path)
+            if not path.exists():
+                raise APIClientError(f"File not found: {file_path}")
+            files[f"files"] = (path.name, open(file_path, "rb"))
+
+        try:
+            return self._make_request(
+                "POST",
+                f"/knowledge-base/{kb_id}/upload",
+                files=files if len(files) > 0 else None,
+            )
+        finally:
+            for file_tuple in files.values():
+                file_tuple[1].close()
+
+    def delete_documents_from_kb(self, kb_id: str, doc_ids: List[str]) -> Dict[str, Any]:
+        """
+        Delete documents from a knowledge base.
+
+        Args:
+            kb_id: Knowledge base ID
+            doc_ids: List of document IDs to delete
+
+        Returns:
+            Deletion response
+        """
+        return self._make_request(
+            "DELETE",
+            f"/knowledge-base/{kb_id}/documents",
+            json_data={"doc_ids": doc_ids},
         )
-        response.raise_for_status()
 
-        if stream:
-            return response.iter_content(decode_unicode=True)
+    def upload_chunks(self, kb_id: str, chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Upload pre-chunked data to a knowledge base.
 
-        # Parse the response to extract tracking information
-        response_data = response.json()
-        return response_data
+        Args:
+            kb_id: Knowledge base ID
+            chunks: List of chunk dictionaries
 
-    # Search
-    # Note: Search endpoint is disabled in the API
-    # def search(self, entity_id: str, query: str, k: int = 5,
-    #           doc_ids: Optional[List[str]] = None) -> Dict[str, Any]:
-    #     """Search entity documents"""
-    #     response = self.session.post(
-    #         f"{self.base_url}/api/search",
-    #         json={
-    #             "entity_id": entity_id,
-    #             "query": query,
-    #             "k": k,
-    #             "doc_ids": doc_ids
-    #         }
-    #     )
-    #     response.raise_for_status()
-    #     return response.json()
-
-    def get_knowledge_graph(self, entity_ids: List[str]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        response = self.session.get(
-            f"{self.base_url}/api/knowledge-graph", json={"entity_ids": entity_ids}
+        Returns:
+            Upload response
+        """
+        return self._make_request(
+            "POST",
+            f"/knowledge-base/{kb_id}/upload-chunks",
+            json_data={"chunks": chunks},
         )
-        response.raise_for_status()
-        return response.json().get("nodes", []), response.json().get("relationships", [])
 
-    # System
-    def health(self) -> Dict[str, Any]:
-        """Check API health"""
-        response = self.session.get(f"{self.base_url}/health")
-        response.raise_for_status()
-        return response.json()
+    # =========================================================================
+    # DOCUMENT ENDPOINTS
+    # =========================================================================
 
-    # def worker_status(self) -> Dict[str, Any]:
-    #     """Get worker status"""
-    #     response = self.session.get(f"{self.base_url}/api/status/workers")
-    #     response.raise_for_status()
-    #     return response.json()
+    def get_document(self, doc_id: str) -> Dict[str, Any]:
+        """
+        Get document metadata.
+
+        Args:
+            doc_id: Document ID
+
+        Returns:
+            Document metadata
+        """
+        return self._make_request("GET", f"/documents/{doc_id}")
+
+    def download_document(self, doc_id: str, output_path: Optional[str] = None) -> bytes:
+        """
+        Download a document file.
+
+        Args:
+            doc_id: Document ID
+            output_path: Optional file path to save to
+
+        Returns:
+            Document file content
+        """
+        url = urljoin(self.base_url, f"/documents/{doc_id}/download")
+
+        try:
+            response = self.session.get(url)
+            response.raise_for_status()
+
+            if output_path:
+                with open(output_path, "wb") as f:
+                    f.write(response.content)
+
+            return response.content
+        except requests.exceptions.RequestException as e:
+            raise APIClientError(f"Download failed: {str(e)}")
+
+    def get_document_presigned_url(
+        self, doc_id: str, expiration: int = 3600, inline: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Get a presigned URL for document download.
+
+        Args:
+            doc_id: Document ID
+            expiration: URL expiration in seconds (max 3600)
+            inline: Whether to serve inline (True) or as attachment (False)
+
+        Returns:
+            Presigned URL response
+        """
+        return self._make_request(
+            "POST",
+            f"/documents/{doc_id}/presigned-url",
+            json_data={
+                "expiration": min(expiration, 3600),
+                "inline": inline,
+            },
+        )
+
+    def search_documents(
+        self,
+        filters: Dict[str, Any],
+        projections: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Search documents with filters.
+
+        Args:
+            filters: MongoDB-style filters (required)
+            projections: MongoDB-style projections
+
+        Returns:
+            Search results
+        """
+        return self._make_request(
+            "POST",
+            "/documents/search",
+            json_data={
+                "filters": filters,
+                "projections": projections or {},
+            },
+        )
+
+    def download_documents_batch(self, filters: Dict[str, Any]) -> bytes:
+        """
+        Download multiple documents as zip.
+
+        Args:
+            filters: MongoDB-style filters to select documents
+
+        Returns:
+            Zip file content
+        """
+        url = urljoin(self.base_url, "/documents/batch/download")
+
+        try:
+            response = self.session.post(url, json={"filters": filters})
+            response.raise_for_status()
+            return response.content
+        except requests.exceptions.RequestException as e:
+            raise APIClientError(f"Batch download failed: {str(e)}")
+
+    # =========================================================================
+    # CONVERSATION ENDPOINTS
+    # =========================================================================
+
+    def create_conversation(
+        self,
+        name: Optional[str] = None,
+        kb_ids: Optional[List[str]] = None,
+        user_instructions: Optional[str] = None,
+        settings: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Create a conversation session.
+
+        Args:
+            name: Conversation name
+            kb_ids: List of knowledge base IDs
+            user_instructions: User instructions/context
+            settings: Conversation settings
+
+        Returns:
+            Created conversation response
+        """
+        return self._make_request(
+            "POST",
+            "/conversation/create",
+            json_data={
+                "name": name,
+                "kb_ids": kb_ids or [],
+                "user_instructions": user_instructions,
+                "settings": settings or {},
+            },
+        )
+
+    def get_conversation(self, conversation_id: str) -> Dict[str, Any]:
+        """
+        Get conversation details.
+
+        Args:
+            conversation_id: Conversation ID
+
+        Returns:
+            Conversation details
+        """
+        return self._make_request("GET", f"/conversation/{conversation_id}")
+
+    def list_conversations(
+        self,
+        filters: Optional[Dict[str, Any]] = None,
+        projections: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        List conversations.
+
+        Args:
+            filters: MongoDB-style filters
+            projections: MongoDB-style projections
+
+        Returns:
+            List of conversations
+        """
+        return self._make_request(
+            "POST",
+            "/conversation/list",
+            json_data={
+                "filters": filters or {},
+                "projections": projections or {},
+            },
+        )
+
+    def submit_message(
+        self,
+        conversation_id: str,
+        prompt: str,
+        parent_message_uuid: Optional[str] = None,
+        attachments: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Submit a message to conversation queue.
+
+        Args:
+            conversation_id: Conversation ID
+            prompt: User message
+            parent_message_uuid: Parent message UUID for threading
+            attachments: File attachments
+
+        Returns:
+            Submission response
+        """
+        return self._make_request(
+            "POST",
+            f"/conversation/{conversation_id}/submit-message",
+            json_data={
+                "prompt": prompt,
+                "parent_message_uuid": parent_message_uuid,
+                "attachments": attachments or [],
+            },
+        )
+
+    def converse_stream(
+        self, conversation_id: str, prompt: str
+    ) -> Generator[Dict[str, Any], None, None]:
+        """
+        Start conversation with streaming response (SSE).
+
+        Args:
+            conversation_id: Conversation ID
+            prompt: User message
+
+        Yields:
+            Streaming response events as dictionaries
+        """
+        for line in self._make_streaming_request(
+            "POST",
+            f"/conversation/{conversation_id}/converse",
+            json_data={"prompt": prompt},
+        ):
+            if line.startswith("event:"):
+                continue
+            if line.startswith("data:"):
+                try:
+                    data = json.loads(line[5:].strip())
+                    yield data
+                except json.JSONDecodeError:
+                    continue
+
+    def process_messages_stream(
+        self, conversation_id: str
+    ) -> Generator[Dict[str, Any], None, None]:
+        """
+        Process queued messages with streaming response (SSE).
+
+        Args:
+            conversation_id: Conversation ID
+
+        Yields:
+            Streaming response events as dictionaries
+        """
+        for line in self._make_streaming_request(
+            "POST",
+            f"/conversation/{conversation_id}/process",
+        ):
+            if line.startswith("event:"):
+                continue
+            if line.startswith("data:"):
+                try:
+                    data = json.loads(line[5:].strip())
+                    yield data
+                except json.JSONDecodeError:
+                    continue
+
+    async def converse_websocket(self, conversation_id: str) -> None:
+        """
+        WebSocket conversation endpoint for concurrent operations.
+
+        Args:
+            conversation_id: Conversation ID
+        """
+        ws_url = self.base_url.replace("http://", "ws://").replace("https://", "wss://")
+        uri = f"{ws_url}/conversation/ws/{conversation_id}"
+        headers = [("X-API-Key", self.api_key)]
+
+        try:
+            async with websockets.connect(uri, extra_headers=headers) as websocket:
+                # Receive messages from the server
+                while True:
+                    try:
+                        message = await asyncio.wait_for(websocket.recv(), timeout=30.0)
+                        data = json.loads(message)
+                        print(f"Received: {data}")
+                    except asyncio.TimeoutError:
+                        print("Connection timeout")
+                        break
+        except Exception as e:
+            raise APIClientError(f"WebSocket error: {str(e)}")
+
+    # =========================================================================
+    # MCP SERVER ENDPOINTS
+    # =========================================================================
+
+    def get_tools(self) -> Dict[str, Any]:
+        """
+        Get available MCP tools.
+
+        Returns:
+            List of available tools
+        """
+        return self._make_request("GET", "/mcp-server/get-tools")
+
+    def execute_tool(
+        self, tool_name: str, arguments: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Execute an MCP tool.
+
+        Args:
+            tool_name: Tool name to execute
+            arguments: Tool arguments
+
+        Returns:
+            Tool execution response
+        """
+        return self._make_request(
+            "POST",
+            "/mcp-server/execute-tool",
+            json_data={
+                "tool_name": tool_name,
+                "arguments": arguments or {},
+            },
+        )
+
+    def search_tools(self, query: str) -> Dict[str, Any]:
+        """
+        Search MCP tools.
+
+        Args:
+            query: Search query
+
+        Returns:
+            Search results
+        """
+        return self._make_request(
+            "POST",
+            "/mcp-server/search-tools",
+            json_data={"query": query},
+        )
 
 
-# Usage Examples
+# ============================================================================
+# EXAMPLE USAGE
+# ============================================================================
+
+
 if __name__ == "__main__":
-    import uuid
-    import time
-
     # Initialize client
-    client = RAGClient(base_url="http://localhost:8002")
+    client = APIClient(base_url="http://localhost:8000", api_key="your-api-key")
 
-    # Generate unique entity ID for this run
-    unique_suffix = uuid.uuid4().hex[:8]
-    entity_id = f"company_{unique_suffix}"
-
-    # ============================================
-    # Example 1: Single Chunk Ingestion
-    # ============================================
-    print("\n=== Single Chunk Ingestion ===")
+    # Example: Health check
     try:
-        # Create an entity first
-        entity = client.create_entity(entity_id, "TechCorp Inc")
-        print(f"Created entity: {entity['entity_id']}")
+        health = client.health_check()
+        print(f"Health: {health}")
+    except APIClientError as e:
+        print(f"Error: {e}")
 
-        # Ingest a single chunk
-        chunk_result = client.ingest_chunk(
-            entity_id=entity_id,
-            chunk_id="chunk_001",
-            text="TechCorp Inc is a leading technology company founded in 2020...",
-            doc_id="doc_financial_2024",
-            chunk_order_index=0,
-            tokens=45,
-            pages=[1],
-        )
-        print(f"Chunk ingestion result: {chunk_result}")
-        print(f"  - Indexed: {chunk_result['indexed']}")
-        print(f"  - Message: {chunk_result['message']}")
-
-        # Try ingesting the same chunk again (should detect as duplicate)
-        dup_result = client.ingest_chunk(
-            entity_id=entity_id,
-            chunk_id="chunk_001",  # Same chunk_id
-            text="TechCorp Inc is a leading technology company founded in 2020...",
-            doc_id="doc_financial_2024",
-            chunk_order_index=0,
-            tokens=45,
-        )
-        print(f"Duplicate detection: {dup_result}")
-        print(f"  - Indexed: {dup_result['indexed']} (should be False)")
-
-    except Exception as e:
-        print(f"Error in single chunk example: {e}")
-
-    # ============================================
-    # Example 2: Batch Chunk Ingestion
-    # ============================================
-    print("\n=== Batch Chunk Ingestion ===")
+    # Example: List knowledge bases
     try:
-        # Prepare multiple chunks for batch ingestion
-        chunks = [
-            {
-                "chunk_id": "batch_chunk_001",
-                "text": "Financial Overview: Total revenue for Q1 2024 was $5.2M...",
-                "chunk_order_index": 1,
-                "tokens": 52,
-                "pages": [2],
-            },
-            {
-                "chunk_id": "batch_chunk_002",
-                "text": "Product Portfolio: Our main products include...",
-                "chunk_order_index": 2,
-                "tokens": 48,
-                "pages": [3],
-            },
-            {
-                "chunk_id": "batch_chunk_003",
-                "text": "Market Position: We maintain leadership in enterprise solutions...",
-                "chunk_order_index": 3,
-                "tokens": 51,
-                "pages": [4],
-            },
-        ]
+        kbs = client.list_knowledge_bases()
+        print(f"Knowledge bases: {kbs}")
+    except APIClientError as e:
+        print(f"Error: {e}")
 
-        # Ingest batch of chunks
-        batch_result = client.ingest_chunks_batch(
-            entity_id=entity_id, chunks=chunks, doc_id="doc_financial_2024"
-        )
-        print(f"Batch ingestion result:")
-        print(f"  - Total chunks: {batch_result['total_chunks']}")
-        print(f"  - Indexed: {batch_result['indexed_chunks']}")
-        print(f"  - Duplicates: {batch_result['duplicate_chunks']}")
-        print(f"  - Message: {batch_result['message']}")
-
-        # Ingest batch with mix of duplicates and new chunks
-        mixed_batch = chunks[:2] + [
-            {
-                "chunk_id": "batch_chunk_004",
-                "text": "Future Plans: We plan to expand into emerging markets...",
-                "chunk_order_index": 4,
-                "tokens": 44,
-                "pages": [5],
-            }
-        ]
-
-        mixed_result = client.ingest_chunks_batch(
-            entity_id=entity_id, chunks=mixed_batch, doc_id="doc_financial_2024"
-        )
-        print(f"\nMixed batch result (2 duplicates + 1 new):")
-        print(f"  - Total chunks: {mixed_result['total_chunks']}")
-        print(f"  - Indexed: {mixed_result['indexed_chunks']}")
-        print(f"  - Duplicates: {mixed_result['duplicate_chunks']}")
-
-    except Exception as e:
-        print(f"Error in batch chunk example: {e}")
-
-    # ============================================
-    # Example 3: Check Health
-    # ============================================
-    print("\n=== Health Check ===")
+    # Example: Create knowledge base
     try:
-        health = client.health()
-        print(f"API Status: {health['status']}")
-        print(f"Entities loaded: {health['entities_loaded']}")
-        print(f"Total documents: {health['total_documents']}")
-    except Exception as e:
-        print(f"Error in health check: {e}")
+        kb = client.create_knowledge_base(
+            title="My Knowledge Base",
+            description="Test KB",
+        )
+        print(f"Created KB: {kb}")
+    except APIClientError as e:
+        print(f"Error: {e}")
+
+    # Example: Upload documents
+    try:
+        result = client.upload_documents("kb_id", ["./test.pdf"])
+        print(f"Upload result: {result}")
+    except APIClientError as e:
+        print(f"Error: {e}")
+
+    # Example: Streaming conversation
+    try:
+        for response in client.converse_stream("conv_id", "Hello"):
+            print(f"Response: {response}")
+    except APIClientError as e:
+        print(f"Error: {e}")

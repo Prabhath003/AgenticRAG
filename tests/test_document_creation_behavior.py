@@ -111,7 +111,7 @@ def main():
 
         # Check files list - should NOT show any document for chunk API ingestion
         print("\n[3] Checking files list after chunk ingestion...")
-        files = list_files(entity_id)
+        files: Dict[str, Any] = list_files(entity_id)
         print(f"✓ Files response: {json.dumps(files, indent=2)}")
 
         if isinstance(files, dict) and "documents" in files:  # type: ignore
@@ -157,7 +157,7 @@ def main():
 
             # Check files list - should NOW show a document entry
             print("\n[6] Checking files list after file upload...")
-            files: Dict[str, Any] = list_files(entity_id)
+            files = list_files(entity_id)
             print(f"✓ Files response: {json.dumps(files, indent=2)}")
 
             if isinstance(files, dict) and "documents" in files:  # type: ignore

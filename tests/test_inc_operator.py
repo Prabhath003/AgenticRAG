@@ -6,7 +6,7 @@ import sys
 import shutil
 import traceback
 
-from src.infrastructure.storage import JSONStorage
+from src.infrastructure.database import JSONStorage
 
 
 def test_inc_operator():

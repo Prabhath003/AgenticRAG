@@ -1,4 +1,3 @@
-from ._models import File
-from ._manager import Manager
+from ._management import Manager
 
-__all__ = ["File", "Manager"]
+__all__ = ["Manager"]

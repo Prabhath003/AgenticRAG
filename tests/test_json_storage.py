@@ -6,8 +6,8 @@ import sys
 import traceback
 import json
 
-from src.infrastructure.storage import JSONStorage
-from src.infrastructure.storage import JSONStorageSession
+from src.infrastructure.database import JSONStorage
+from src.infrastructure.database import JSONStorageSession
 
 
 def test_json_storage():

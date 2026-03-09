@@ -18,6 +18,7 @@ import threading
 from typing import Optional, Any
 import time
 import atexit
+from threading import RLock
 
 from ...config import Config
 from ...log_creator import get_file_logger
@@ -49,7 +50,7 @@ class MongoConnectionPool:
         self._last_used = time.time()
         self._cleanup_interval = 300
         self._max_idle_time = 600
-        self._lock = threading.RLock()
+        self._client_lock: RLock = threading.RLock()
         self._cleanup_task = None
         self._shutdown = False
 
@@ -137,7 +138,7 @@ class MongoConnectionPool:
                 logger.error(f"Database operation error (attempt {retry_count}/{max_retries}): {e}")
 
                 # Reset connection on error
-                with self._lock:
+                with self._client_lock:
                     if self._client:
                         try:
                             self._client.close()

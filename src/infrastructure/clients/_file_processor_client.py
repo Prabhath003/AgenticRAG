@@ -21,7 +21,7 @@ Usage:
 
     # Parse a file (waits for completion by default)
     result = client.parse_file("path/to/document.pdf", source="my-app/docs")
-    print(f"Cost: ${result['estimated_cost_usd']}")
+    log(f"Cost: ${result['estimated_cost_usd']}")
 
     # Chunk a file (waits for completion by default)
     result = client.chunk_file("path/to/document.md", source="my-app/content")
@@ -33,7 +33,7 @@ Usage:
 
     # Get cost report
     report = client.get_cost_report()
-    print(f"Total cost: ${report['total_estimated_cost']}")
+    log(f"Total cost: ${report['total_estimated_cost']}")
 """
 
 import requests
@@ -41,6 +41,10 @@ import time
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple, ByteString
 import mimetypes
+
+from ...log_creator import get_console_logger
+
+console_logger = get_console_logger()
 
 
 class FileProcessorClient:
@@ -161,12 +165,9 @@ class FileProcessorClient:
                 task_status = status.get("status")
 
                 # Check if task is complete
-                if task_status in ["completed", "COMPLETED"]:
+                if task_status in ["completed", "COMPLETED", "failed", "FAILED"]:
                     # Task is complete, get the full result
                     return self.get_task_result(task_id)
-
-                if task_status in ["failed", "FAILED"]:
-                    raise Exception("File processing failed")
 
                 # Task still processing
                 time.sleep(poll_interval)
@@ -174,7 +175,8 @@ class FileProcessorClient:
             except requests.exceptions.RequestException as e:
                 # Only re-raise connection/network errors
                 if isinstance(
-                    e, (requests.exceptions.ConnectionError, requests.exceptions.Timeout)
+                    e,
+                    (requests.exceptions.ConnectionError, requests.exceptions.Timeout),
                 ):
                     raise
                 # For other HTTP errors, retry after waiting
@@ -254,7 +256,7 @@ class FileProcessorClient:
         Example:
             >>> client = FileProcessorClient()
             >>> result = client.parse_file("document.pdf", source="docs/2024")
-            >>> print(result['markdown'])
+            >>> log(result['markdown'])
         """
         task_id = self.parse_file_async(file_path, source=source)
 
@@ -337,7 +339,7 @@ class FileProcessorClient:
             >>> client = FileProcessorClient()
             >>> result = client.chunk_file("large_doc.md", source="docs/2024")
             >>> for chunk in result['chunks']:
-            ...     print(f"Chunk {chunk['chunk_index']}: {chunk['content'][:100]}")
+            ...     log(f"Chunk {chunk['chunk_index']}: {chunk['content'][:100]}")
         """
         task_id = self.chunk_file_async(file_path, source=source)
 
@@ -532,7 +534,7 @@ class FileProcessorClient:
         Example:
             >>> client = FileProcessorClient()
             >>> results = client.batch_parse_files(["doc1.pdf", "doc2.md"], source="batch-2024")
-            >>> print(f"Processed {results['successful']} files for ${results['estimated_cost_usd']}")
+            >>> log(f"Processed {results['successful']} files for ${results['estimated_cost_usd']}")
         """
         task_id = self.batch_parse_files_async(file_paths, source=source)
 
@@ -615,9 +617,102 @@ class FileProcessorClient:
         Example:
             >>> client = FileProcessorClient()
             >>> results = client.batch_chunk_files(["doc1.md", "doc2.txt"], source="batch-2024")
-            >>> print(f"Processed {results['successful']} files for ${results['estimated_cost_usd']}")
+            >>> log(f"Processed {results['successful']} files for ${results['estimated_cost_usd']}")
         """
         task_id = self.batch_chunk_files_async(file_paths, source=source)
+
+        if not wait:
+            return {
+                "task_id": task_id,
+                "status_url": f"/batch/status/{task_id}",
+                "result_url": f"/batch/result/{task_id}",
+            }
+
+        return self.wait_for_task(task_id, poll_interval=poll_interval)
+
+    def batch_chunk_bytes_async(self, file_contents: List[Dict[str, Any]]) -> str:
+        """
+        Chunk multiple files from bytes asynchronously (returns task_id immediately).
+
+        Args:
+            file_contents: List of dicts with keys:
+                - content: bytes - File content as bytes
+                - filename: str - Original filename (used for extension detection)
+                - source: str (optional) - Source identifier for this file
+                - mime_type: str (optional) - MIME type (auto-detected if not provided)
+
+        Returns:
+            Task ID string
+
+        Raises:
+            requests.exceptions.RequestException: If API request fails
+
+        Example:
+            >>> files = [
+            ...     {"content": b"...", "filename": "doc1.pdf", "source": "batch/2024"},
+            ...     {"content": b"...", "filename": "doc2.md", "source": "batch/2024"}
+            ... ]
+            >>> task_id = client.batch_chunk_bytes_async(files)
+        """
+        files: List[Tuple[str, Tuple[str, bytes, str]]] = []
+        for file_item in file_contents:
+            filename = file_item.get("filename", "file")
+            content = file_item.get("content", b"")
+            mime_type = file_item.get("mime_type") or self._get_mime_type(filename)
+
+            files.append(("files", (filename, content, mime_type)))
+
+        # Build params - use source from first file if not individual sources
+        params: Dict[str, Any] = {}
+        if file_contents and file_contents[0].get("source"):
+            params["source"] = file_contents[0]["source"]
+
+        response = requests.post(f"{self.base_url}/batch/chunk", files=files, params=params)
+
+        response.raise_for_status()
+        result = response.json()
+        return result["task_id"]
+
+    def batch_chunk_bytes(
+        self,
+        file_contents: List[Dict[str, Any]],
+        wait: bool = True,
+        poll_interval: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """
+        Chunk multiple files from bytes in parallel.
+
+        Args:
+            file_contents: List of dicts with keys:
+                - content: bytes - File content as bytes
+                - filename: str - Original filename
+                - source: str (optional) - Source identifier
+                - mime_type: str (optional) - MIME type (auto-detected if not provided)
+            wait: If True, wait for batch to complete (default: True)
+            poll_interval: Override default poll interval
+
+        Returns:
+            If wait=True: Dictionary with batch results containing:
+                - task_id: str
+                - total_files: int
+                - successful: int
+                - failed: int
+                - files: List[Dict] with per-file chunk info
+                - estimated_cost_usd: float
+            If wait=False: Dictionary with task_id and status URLs
+
+        Raises:
+            requests.exceptions.RequestException: If API request fails
+
+        Example:
+            >>> files = [
+            ...     {"content": content1, "filename": "doc1.pdf", "source": "batch"},
+            ...     {"content": content2, "filename": "doc2.md", "source": "batch"}
+            ... ]
+            >>> results = client.batch_chunk_bytes(files)
+            >>> log(f"Processed {results['successful']} files")
+        """
+        task_id = self.batch_chunk_bytes_async(file_contents)
 
         if not wait:
             return {
@@ -675,8 +770,8 @@ class FileProcessorClient:
         Example:
             >>> client = FileProcessorClient()
             >>> report = client.get_cost_report()
-            >>> print(f"Total cost: ${report['total_estimated_cost']}")
-            >>> print(f"Files processed: {report['total_files']}")
+            >>> log(f"Total cost: ${report['total_estimated_cost']}")
+            >>> log(f"Files processed: {report['total_files']}")
         """
         response = requests.get(f"{self.base_url}/cost-report")
         response.raise_for_status()
@@ -685,7 +780,9 @@ class FileProcessorClient:
 
 # Convenience functions for quick usage
 def parse_file(
-    file_path: str, source: Optional[str] = None, base_url: str = "http://localhost:8003"
+    file_path: str,
+    source: Optional[str] = None,
+    base_url: str = "http://localhost:8003",
 ) -> Dict[str, Any]:
     """
     Quick helper to parse a file without instantiating a client.
@@ -708,7 +805,9 @@ def parse_file(
 
 
 def chunk_file(
-    file_path: str, source: Optional[str] = None, base_url: str = "http://localhost:8003"
+    file_path: str,
+    source: Optional[str] = None,
+    base_url: str = "http://localhost:8003",
 ) -> Dict[str, Any]:
     """
     Quick helper to chunk a file without instantiating a client.
@@ -731,7 +830,9 @@ def chunk_file(
 
 
 def batch_parse_files(
-    file_paths: List[str], source: Optional[str] = None, base_url: str = "http://localhost:8003"
+    file_paths: List[str],
+    source: Optional[str] = None,
+    base_url: str = "http://localhost:8003",
 ) -> Dict[str, Any]:
     """
     Quick helper to batch parse multiple files without instantiating a client.
@@ -753,7 +854,9 @@ def batch_parse_files(
 
 
 def batch_chunk_files(
-    file_paths: List[str], source: Optional[str] = None, base_url: str = "http://localhost:8003"
+    file_paths: List[str],
+    source: Optional[str] = None,
+    base_url: str = "http://localhost:8003",
 ) -> Dict[str, Any]:
     """
     Quick helper to batch chunk multiple files without instantiating a client.
@@ -781,102 +884,102 @@ if __name__ == "__main__":
 
     # Example: Parse a file
     if len(sys.argv) < 2:
-        print("Usage: python api_client.py <file_path> [source]")
-        print("\nExample:")
-        print("  python api_client.py document.pdf my-app/docs")
+        console_logger.info("Usage: python api_client.py <file_path> [source]")
+        console_logger.info("\nExample:")
+        console_logger.info("  python api_client.py document.pdf my-app/docs")
         sys.exit(1)
 
     file_path = sys.argv[1]
     source = sys.argv[2] if len(sys.argv) > 2 else None
 
-    print(f"📄 Processing file: {file_path}")
-    print(f"🏷️  Source: {source or 'Not specified'}")
-    print()
+    console_logger.info(f"📄 Processing file: {file_path}")
+    console_logger.info(f"🏷️  Source: {source or 'Not specified'}")
+    console_logger.info("")
 
     try:
         # Initialize client
         client = FileProcessorClient()
 
         # Check health
-        print("🏥 Checking API health...")
+        console_logger.info("🏥 Checking API health...")
         health = client.health_check()
-        print(f"   Status: {health['status']}")
-        print(f"   CPU: {health.get('cpu_utilization', 'N/A')}")
-        print(
+        console_logger.info(f"   Status: {health['status']}")
+        console_logger.info(f"   CPU: {health.get('cpu_utilization', 'N/A')}")
+        console_logger.info(
             f"   Workers: {health.get('current_workers', 'N/A')}/{health.get('max_workers', 'N/A')}"
         )
-        print()
+        console_logger.info("")
 
         # Parse file (async task-based)
-        print("📝 Submitting parse task...")
+        console_logger.info("📝 Submitting parse task...")
         task_id = client.parse_file_async(file_path, source=source)
-        print(f"   Task ID: {task_id}")
-        print(f"   Status URL: /status/{task_id}")
-        print()
+        console_logger.info(f"   Task ID: {task_id}")
+        console_logger.info(f"   Status URL: /status/{task_id}")
+        console_logger.info("")
 
         # Wait for completion
-        print("⏳ Waiting for task to complete...")
+        console_logger.info("⏳ Waiting for task to complete...")
         result = client.wait_for_task(task_id)
 
         # Check if task was successful
         status = result.get("status", "")
-        print(f"   Task Status: {status}")
-        print(f"   Filename: {result.get('filename', 'N/A')}")
-        print(f"   File Type: {result.get('file_type', 'N/A')}")
+        console_logger.info(f"   Task Status: {status}")
+        console_logger.info(f"   Filename: {result.get('filename', 'N/A')}")
+        console_logger.info(f"   File Type: {result.get('file_type', 'N/A')}")
 
         # Show cost information
         cost = result.get("estimated_cost_usd", 0)
-        print(f"   💰 Estimated Cost: ${cost:.6f}")
-        print()
+        console_logger.info(f"   💰 Estimated Cost: ${cost:.6f}")
+        console_logger.info("")
 
         # Show files processed
         files_info = result.get("files", [])
         if files_info:
-            print(f"📦 Files Processed: {len(files_info)}")
+            console_logger.info(f"📦 Files Processed: {len(files_info)}")
             for file_info in files_info:
-                print(f"   - {file_info.get('filename', 'unknown')}")
-                print(f"     Status: {file_info.get('status', 'unknown')}")
-                print(f"     Cost: ${file_info.get('estimated_cost_usd', 0):.6f}")
-        print()
+                console_logger.info(f"   - {file_info.get('filename', 'unknown')}")
+                console_logger.info(f"     Status: {file_info.get('status', 'unknown')}")
+                console_logger.info(f"     Cost: ${file_info.get('estimated_cost_usd', 0):.6f}")
+        console_logger.info("")
 
         # Show results if available
         results = result.get("results", {})
         if results:
-            print("✅ Parsed Content Available:")
+            console_logger.info("✅ Parsed Content Available:")
             for file_hash, content in results.items():
                 if isinstance(content, str):
-                    print(f"   File Hash: {file_hash}")
+                    console_logger.info(f"   File Hash: {file_hash}")
                     preview = content[:300] if len(content) > 300 else content
-                    print(f"   Content Preview: {preview}")
+                    console_logger.info(f"   Content Preview: {preview}")
                     if len(content) > 300:
-                        print("   ...")
-        print()
+                        console_logger.info("   ...")
+        console_logger.info("")
 
         # Show metrics if available
         metrics = result.get("metrics", {})
         if metrics:
-            print("📊 Processing Metrics:")
+            console_logger.info("📊 Processing Metrics:")
             for file_hash, metric_info in metrics.items():
                 if metric_info:
-                    print(f"   File Hash: {file_hash}")
-                    print(f"   Metrics: {json.dumps(metric_info, indent=6)}")
+                    console_logger.info(f"   File Hash: {file_hash}")
+                    console_logger.info(f"   Metrics: {json.dumps(metric_info, indent=6)}")
 
     except FileNotFoundError as e:
-        print(f"❌ Error: {e}")
+        console_logger.error(f"❌ Error: {e}")
         sys.exit(1)
     except requests.exceptions.ConnectionError:
-        print("❌ Error: Could not connect to API server")
-        print("   Make sure the server is running on http://localhost:8003")
+        console_logger.error("❌ Error: Could not connect to API server")
+        console_logger.warning("   Make sure the server is running on http://localhost:8003")
         sys.exit(1)
     except requests.exceptions.HTTPError as e:
-        print(f"❌ HTTP Error: {e}")
-        print(f"   Response: {e.response.text}")
+        console_logger.error(f"❌ HTTP Error: {e}")
+        console_logger.warning(f"   Response: {e.response.text}")
         sys.exit(1)
     except TimeoutError as e:
-        print(f"❌ Timeout Error: {e}")
+        console_logger.error(f"❌ Timeout Error: {e}")
         sys.exit(1)
     except Exception as e:
-        print(f"❌ Unexpected Error: {e}")
+        console_logger.error(f"❌ Unexpected Error: {e}")
         import traceback
 
         traceback.print_exc()
