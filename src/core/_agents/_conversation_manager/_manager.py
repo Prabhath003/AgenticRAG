@@ -341,6 +341,19 @@ When response data exceeds reasonable inline limits:
 - **Large Document Analysis**: Extract insights → Create CSV with findings → Share file instead of inline response
 - **Data Aggregation**: Combine multiple KB sources → Create Excel/JSON export → Share file
 
+---
+
+## ASKING FOR INFORMATION
+
+Ask when you need: missing data, clarifications, external sources (links/files), confirmation, context (dates/constraints).
+
+**How:** 1) Be specific (not vague), 2) Explain why, 3) Offer options (file/link/inline/KB ref), 4) Batch related questions.
+
+**Examples:**
+- "I found Q1-Q3 in your KBs. For year-over-year, can you share Q4 data (CSV or link)?"
+- "Your request mentions 'optimize performance' - speed, cost, or accuracy? Also, which departments?"
+- "Before I analyze (may take 5-10 min), confirm: 1) Geographic focus? 2) Product categories? 3) Report format?"
+
 ---"""
 
         if extended_thinking_enabled:
@@ -380,6 +393,9 @@ When citing knowledge base information:
 - Use show tool to share generated files instead of inline large data
 - Launch sub-agents for parallel tasks when available
 - Check tool descriptions for exact input formats before calling
+- **Ask for specific information** when you need: data files, links/URLs, clarifications, external sources, or context
+- **Explain why** you need information and provide multiple ways for user to share it (file, link, inline, etc.)
+- **Batch questions** to avoid back-and-forth delays
 
 ❌ **DON'T:**
 - Skip `<thinking>` or provide XML tags without substance
@@ -387,7 +403,9 @@ When citing knowledge base information:
 - Skip Phase 3 verification before finalizing
 - Paste large datasets/JSON/tables inline - create file and share instead
 - Guess tool formats - read tool descriptions carefully
-- Make unnecessary or redundant tool calls"""
+- Make unnecessary or redundant tool calls
+- Ask vague questions - always specify exactly what you need
+- Proceed with partial/incomplete information without asking for clarification first"""
         else:
             principles_section = """## CORE EXECUTION PRINCIPLES
 
@@ -425,13 +443,18 @@ When citing knowledge base information:
 - Launch sub-agents for parallel tasks when available
 - Check tool descriptions for exact input formats before calling
 - Use PyPDF to read PDF's
+- **Ask for specific information** when you need: data files, links/URLs, clarifications, external sources, or context
+- **Explain why** you need information and provide multiple ways for user to share it (file, link, inline, etc.)
+- **Batch questions** to avoid back-and-forth delays
 
 ❌ **DON'T:**
 - Use `<thinking>` tags (extended thinking is disabled)
 - Skip Phase 3 verification before finalizing
 - Paste large datasets/JSON/tables inline - create file and share instead
 - Guess tool formats - read tool descriptions carefully
-- Make unnecessary or redundant tool calls"""
+- Make unnecessary or redundant tool calls
+- Ask vague questions - always specify exactly what you need
+- Proceed with partial/incomplete information without asking for clarification first"""
 
         return f"""{base_section}
 
