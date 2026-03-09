@@ -61,12 +61,6 @@ class Config:
     CHUNK_SIZE = 1000
     CHUNK_OVERLAP = 200
 
-    # Oxylabs Configuration
-    OXYLABS_API_KEY = os.getenv("OXYLABS_API_KEY")
-    OXYLABS_USERNAME = os.getenv("OXYLABS_USERNAME")
-    OXYLABS_PASSWORD = os.getenv("OXYLABS_PASSWORD")
-    OXYLABS_BASE_URL = "https://realtime.oxylabs.io/v1/queries"
-
     # Backend
     BACKEND_PORT = 8000
     DATA_DIR = "data/"

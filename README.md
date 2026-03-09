@@ -1,50 +1,31 @@
-# Entity-Scoped RAG System with FastAPI
+# AgenticRAG: Agent-Based Retrieval-Augmented Generation
 
-A high-performance, production-ready Retrieval-Augmented Generation (RAG) system with entity-scoped isolation, JSON storage, and complete REST API.
+A modular, production-ready agent-based RAG system with ChromaDB vector storage, S3 integration, and comprehensive agentic tool framework.
 
 ## 🌟 Key Features
 
 ### Core System
-- **Entity-Scoped RAG**: Isolated FAISS indexes per entity for 10-100x faster search
-- **JSON Storage**: MongoDB-like API with atomic writes and thread-safe file locks
-- **Parallel Processing**: ThreadPoolExecutor for concurrent operations across entities
-- **Research Agent**: AI agent with RAG navigation and entity-scoped search
-- **File Processing**: Support for PDF, TXT, DOCX, MD files
+- **Agent-Based RAG**: Autonomous agents with integrated knowledge base access and tool management
+- **ChromaDB Vector Storage**: GPU-enabled embeddings with vector similarity search
+- **S3 Hybrid Storage**: Efficient document storage with local caching
+- **Agentic Tool Framework**: Extensible tools for agents (file editing, bash, knowledge base queries)
+- **Multi-Knowledge Base Support**: Scope agents to specific knowledge bases
+- **File Processing**: Support for PDF, TXT, DOCX, MD files with intelligent chunking
 
 ### FastAPI Application
-- **Entity Management**: Create, get, list, delete entities
-- **File Management**: Upload files (returns doc_id), list files, delete files
-- **Chat Sessions**: Multiple sessions per entity with full history
-- **Streaming Chat**: Real-time response streaming
-- **Fast Search**: Entity-scoped semantic search
-- **API Documentation**: Auto-generated OpenAPI/Swagger docs
-- **Data Persistence**: All data persists across server restarts in `Config.DATA_DIR`
+- **Knowledge Base Management**: Create, manage, and query knowledge bases
+- **Document Ingestion**: Upload and process documents with automatic chunking
+- **Semantic Search**: ChromaDB-powered vector similarity search
+- **API Key Authentication**: Secure PBKDF2-hashed API key management with admin/user roles
+- **Admin Endpoints**: User and API key management for multi-tenant scenarios
+- **Operation Logging**: Comprehensive audit trails for all operations
+- **WebSocket Support**: Real-time agent interactions
 
 ## 🚀 Quick Start
 
 ### 1. Installation
 
-#### Option A: Using pip (Latest Release)
-
-```bash
-pip install agentic-rag
-```
-
-#### Option B: From Source
-
-```bash
-# Clone repository
-git clone https://github.com/Prabhath003/AgenticRAG.git
-cd AgenticRAG
-
-# Install in development mode
-pip install -e .
-
-# Or install with optional dependencies
-pip install -e ".[dev,docs]"
-```
-
-#### Option C: Using requirements.txt
+#### From Source
 
 ```bash
 # Clone repository
@@ -54,13 +35,26 @@ cd AgenticRAG
 # Install dependencies
 pip install -r requirements.txt
 
-# Install API dependencies
-cd api
-pip install -r requirements.txt
-cd ..
+# Or install in development mode
+pip install -e .
 ```
 
-### 2. Start the API Server
+### 2. Configuration
+
+Set up environment variables:
+
+```bash
+# Copy example env file
+cp .env.example .env
+
+# Edit with your settings
+MONGODB_URI=mongodb://localhost:27017
+CHROMADB_PERSISTENCE_DIR=./chroma_data
+AWS_S3_BUCKET=your-bucket-name
+OPENAI_API_KEY=your-key-here
+```
+
+### 3. Start the API Server
 
 ```bash
 cd api
@@ -69,127 +63,118 @@ python main.py
 
 Server runs on: `http://localhost:8000`
 
-### 3. Access API Documentation
+### 4. Access API Documentation
 
 - **Swagger UI**: http://localhost:8000/docs
 - **ReDoc**: http://localhost:8000/redoc
 - **Health Check**: http://localhost:8000/health
 
-### 4. Test the API
-
-```bash
-cd api
-python test_api.py
-```
-
 ## 📚 Complete Workflow Example
 
-### Using Python
+### Using Python with API Key
 
 ```python
 import requests
 
 BASE_URL = "http://localhost:8000"
+API_KEY = "your-api-key-here"
+HEADERS = {"X-API-Key": API_KEY}
 
-# 1. Create entity
-response = requests.post(f"{BASE_URL}/api/entities", json={
-    "entity_id": "company_123",
-    "entity_name": "TechCorp Industries",
-    "description": "AI analytics company"
-})
-print(f"Entity created: {response.json()}")
+# 1. Create knowledge base
+response = requests.post(f"{BASE_URL}/api/knowledge-bases",
+    json={
+        "name": "Company Documents",
+        "description": "Internal company documents and reports"
+    },
+    headers=HEADERS
+)
+kb_id = response.json()["kb_id"]
+print(f"KB created: {kb_id}")
 
-# 2. Upload file (returns doc_id)
+# 2. Upload document
 with open("report.pdf", "rb") as f:
+    files = {"file": f}
     response = requests.post(
-        f"{BASE_URL}/api/entities/company_123/files",
-        files={"file": f},
-        data={"description": "Annual Report 2024"}
+        f"{BASE_URL}/api/knowledge-bases/{kb_id}/documents",
+        files=files,
+        headers=HEADERS
     )
     doc_id = response.json()["doc_id"]
-    print(f"File uploaded, doc_id: {doc_id}")
+    print(f"Document uploaded: {doc_id}")
 
-# 3. Create chat session
-response = requests.post(f"{BASE_URL}/api/chat/sessions", json={
-    "entity_id": "company_123",
-    "session_name": "Financial Analysis"
-})
-session_id = response.json()["session_id"]
-print(f"Session created: {session_id}")
+# 3. Query documents
+response = requests.post(
+    f"{BASE_URL}/api/knowledge-bases/{kb_id}/search",
+    json={"query": "quarterly revenue", "n_results": 5},
+    headers=HEADERS
+)
+results = response.json()["results"]
+print(f"Found {len(results)} relevant chunks")
 
-# 4. Send message
-response = requests.post(f"{BASE_URL}/api/chat", json={
-    "session_id": session_id,
-    "message": "What are the key financial metrics?",
-    "stream": False
-})
-print(f"Response: {response.json()['message']['content']}")
-
-# 5. Search
-response = requests.post(f"{BASE_URL}/api/search", json={
-    "entity_id": "company_123",
-    "query": "revenue growth",
-    "k": 5
-})
-print(f"Found {response.json()['total']} results")
+# 4. Get agent context
+response = requests.get(
+    f"{BASE_URL}/api/knowledge-bases/{kb_id}",
+    headers=HEADERS
+)
+kb_details = response.json()
+print(f"KB has {kb_details['document_count']} documents")
 ```
 
 ### Using cURL
 
 ```bash
-# Create entity
-curl -X POST http://localhost:8000/api/entities \
+API_KEY="your-api-key-here"
+
+# Create knowledge base
+curl -X POST http://localhost:8000/api/knowledge-bases \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: $API_KEY" \
   -d '{
-    "entity_id": "company_123",
-    "entity_name": "TechCorp Industries"
+    "name": "Company Documents",
+    "description": "Internal documents"
   }'
 
-# Upload file
-curl -X POST http://localhost:8000/api/entities/company_123/files \
+# Upload document
+curl -X POST http://localhost:8000/api/knowledge-bases/kb_123/documents \
+  -H "X-API-Key: $API_KEY" \
   -F "file=@report.pdf"
 
-# Create session
-curl -X POST http://localhost:8000/api/chat/sessions \
+# Search
+curl -X POST http://localhost:8000/api/knowledge-bases/kb_123/search \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: $API_KEY" \
   -d '{
-    "entity_id": "company_123",
-    "session_name": "Analysis"
-  }'
-
-# Chat
-curl -X POST http://localhost:8000/api/chat \
-  -H "Content-Type: application/json" \
-  -d '{
-    "session_id": "session_xyz",
-    "message": "What is the revenue?",
-    "stream": false
+    "query": "revenue analysis",
+    "n_results": 5
   }'
 ```
 
 ## 📋 API Endpoints
 
-### Entity Management
-- `POST /api/entities` - Create entity
-- `GET /api/entities/{entity_id}` - Get entity details
-- `GET /api/entities` - List all entities
-- `DELETE /api/entities/{entity_id}` - Delete entity
+### Knowledge Base Management
+- `POST /api/knowledge-bases` - Create knowledge base
+- `GET /api/knowledge-bases` - List knowledge bases
+- `GET /api/knowledge-bases/{kb_id}` - Get KB details
+- `DELETE /api/knowledge-bases/{kb_id}` - Delete KB
 
-### File Management
-- `POST /api/entities/{entity_id}/files` - Upload file (returns doc_id)
-- `GET /api/entities/{entity_id}/files` - List files
-- `DELETE /api/entities/{entity_id}/files/{doc_id}` - Delete file
+### Document Management
+- `POST /api/knowledge-bases/{kb_id}/documents` - Upload document
+- `GET /api/knowledge-bases/{kb_id}/documents` - List documents in KB
+- `GET /api/knowledge-bases/{kb_id}/documents/{doc_id}` - Get document chunks
+- `DELETE /api/knowledge-bases/{kb_id}/documents/{doc_id}` - Delete document
 
-### Chat Sessions
-- `POST /api/chat/sessions` - Create session
-- `GET /api/chat/sessions/{session_id}` - Get session
-- `GET /api/entities/{entity_id}/sessions` - List entity sessions
-- `DELETE /api/chat/sessions/{session_id}` - Delete session
-- `GET /api/chat/sessions/{session_id}/messages` - Get history
+### Semantic Search
+- `POST /api/knowledge-bases/{kb_id}/search` - Vector similarity search
+- `POST /api/knowledge-bases/{kb_id}/chunks/{chunk_id}/context` - Get chunk with context
 
-### Chat & Search
-- `POST /api/chat` - Send message (streaming/non-streaming)
-- `POST /api/search` - Entity-scoped search
+### Admin Operations
+- `POST /admin/api_keys/generate` - Generate API key (admin only)
+- `POST /admin/api_keys/list` - List API keys (admin only)
+- `POST /admin/api_keys/delete` - Delete API keys (admin only)
+- `POST /admin/users/create` - Create user (admin only)
+- `GET /admin/users` - List users (admin only)
+- `PUT /admin/users/{user_id}` - Update user (admin only)
+- `DELETE /admin/users/{user_id}` - Delete user (admin only)
 
 ### System
 - `GET /health` - Health check
@@ -198,97 +183,138 @@ curl -X POST http://localhost:8000/api/chat \
 ## 🏗️ Architecture
 
 ```
-┌─────────────────────────────────────────┐
-│         FastAPI Application             │
-│  - Entity Management                    │
-│  - File Upload/Delete                   │
-│  - Multiple Chat Sessions               │
-│  - Streaming Support                    │
-└─────────────────────────────────────────┘
-                 │
-    ┌────────────┼────────────┐
-    │            │            │
-    ▼            ▼            ▼
-┌────────┐  ┌────────┐  ┌──────────┐
-│Entity  │  │Research│  │  Search  │
-│Manager │  │ Agent  │  │  Engine  │
-└────────┘  └────────┘  └──────────┘
-    │            │            │
-    └────────────┼────────────┘
-                 ▼
-    ┌──────────────────────────┐
-    │  Entity-Scoped RAG       │
-    │  - EntityVectorStore     │
-    │  - Parallel Processing   │
-    │  - Thread Safety         │
-    └──────────────────────────┘
-                 │
-        ┌────────┴────────┐
-        ▼                 ▼
-┌──────────────┐  ┌─────────────┐
-│ FAISS Index  │  │JSON Storage │
-│ (per entity) │  │ (atomic)    │
-└──────────────┘  └─────────────┘
+┌──────────────────────────────────────────────┐
+│           FastAPI Application                │
+│  - Knowledge Base Management                 │
+│  - Document Ingestion & Chunking             │
+│  - Semantic Search (ChromaDB)                │
+│  - Admin & User Management                   │
+│  - API Key Authentication (PBKDF2)           │
+└──────────────────────────────────────────────┘
+                     │
+        ┌────────────┼────────────┐
+        │            │            │
+        ▼            ▼            ▼
+┌──────────────┐ ┌──────────┐ ┌─────────────┐
+│  Agent MCP   │ │KB Manager│ │Operation    │
+│  Client      │ │          │ │ Logging     │
+└──────────────┘ └──────────┘ └─────────────┘
+        │            │            │
+        └────────────┼────────────┘
+                     ▼
+        ┌──────────────────────────┐
+        │  ChromaDB Vector Store   │
+        │  - GPU Embeddings        │
+        │  - Similarity Search     │
+        │  - Metadata Filtering    │
+        └──────────────────────────┘
+                     │
+        ┌────────────┴────────────┐
+        ▼                         ▼
+┌──────────────────┐     ┌─────────────────┐
+│ ChromaDB Local   │     │  S3 Storage     │
+│ (persistent)     │     │  (hybrid)       │
+└──────────────────┘     └─────────────────┘
+                │                │
+                └────────────────┘
+                     │
+        ┌────────────┴────────────┐
+        ▼                         ▼
+┌──────────────────┐     ┌─────────────────┐
+│   MongoDB        │     │  AWS RDS        │
+│  (documents)     │     │ (operations)    │
+└──────────────────┘     └─────────────────┘
 ```
 
 ## 📂 Project Structure
 
 ```
 AgenticRAG/
-├── api/                          # FastAPI application
-│   ├── main.py                   # API server
-│   ├── models.py                 # Pydantic models
-│   ├── test_api.py              # Test client
-│   └── requirements.txt         # API dependencies
+├── api/                                      # FastAPI application
+│   ├── main.py                               # API server & routes
+│   ├── _authentication.py                    # API key auth (PBKDF2)
+│   ├── _models.py                            # Pydantic request/response models
+│   ├── _dependencies.py                      # FastAPI dependencies
+│   ├── _middleware_logging.py                # Request/response logging
+│   └── _routes/                              # Route modules
+│       ├── _health.py, _admin.py, _knowledge_base.py
+│       ├── _documents.py, _conversation.py, _operations.py
+│       └── _mcp_server.py
 ├── src/
+│   ├── config/                               # Configuration
+│   │   └── _settings.py                      # Settings & environment variables
 │   ├── core/
-│   │   ├── agents/
-│   │   │   ├── research_agent.py          # AI research agent
-│   │   │   ├── company_research_agent.py
-│   │   │   └── custom_types.py
-│   │   ├── entity_scoped_rag.py           # Entity-scoped RAG system
-│   │   └── rag_system.py                  # RAG system with JSON storage
-│   ├── infrastructure/
-│   │   ├── storage/
-│   │   │   └── json_storage.py            # JSON storage with atomic writes
-│   │   └── file_processor/
-│   │       ├── processor.py               # File processing
-│   │       └── chunkers.py                # Text chunking
-│   └── config/
-│       └── settings.py                    # Configuration
-├── data/                                  # Data storage
-│   ├── entity_scoped/entities/           # Entity-specific stores
-│   ├── uploads/                          # Uploaded files
-│   ├── storage/                          # JSON storage files
-│   └── logs/                             # Application logs
-├── tests/
-│   ├── test_json_storage.py             # JSON storage tests
-│   └── test_entity_scoped_rag.py        # Entity-scoped RAG tests
-├── API_DOCUMENTATION.md                  # Complete API docs
-├── DEPLOYMENT_GUIDE.md                   # Deployment guide
-├── ENTITY_SCOPED_RAG_GUIDE.md           # Entity-scoped RAG guide
-├── MIGRATION_TO_JSON_STORAGE.md         # JSON storage migration
-└── README.md                            # This file
+│   │   ├── _agents/                          # Agent framework
+│   │   │   ├── _main_agent.py                # Main agent implementation
+│   │   │   ├── _tool_manager/                # Tool management system
+│   │   │   │   └── _tools/                   # Tool implementations
+│   │   │   │       ├── text_editor/          # File editing tools
+│   │   │   │       ├── user_kbs/             # Knowledge base tools
+│   │   │   │       └── workspace/            # Workspace tools (bash, file read)
+│   │   │   └── _conversation_manager/        # Conversation management
+│   │   ├── _management/                      # Management layer
+│   │   │   └── _sub_managers/
+│   │   │       ├── _knowledge_base_manager.py
+│   │   │       ├── _conversation_manager.py
+│   │   │       └── _mcp_server.py
+│   │   ├── _data_indexer.py                  # Document indexing pipeline
+│   │   └── models/                           # Data models
+│   │       ├── agent/                        # Agent-specific models
+│   │       ├── operation_audit/              # Audit logging models
+│   │       └── core_models.py, response_models.py
+│   └── infrastructure/
+│       ├── database/                         # Database connections
+│       │   ├── _mongodb.py, _aws_rdsdb.py, _json_storage.py
+│       │   └── Connection pooling & session management
+│       ├── storage/                          # Vector & file storage
+│       │   ├── _chromadb_store.py            # ChromaDB integration
+│       │   └── _s3_service.py                # S3 file storage
+│       ├── clients/                          # External service clients
+│       ├── operation_logging/                # Audit trail logging
+│       ├── utils/                            # Utilities
+│       └── dynamic_thread_pool.py            # Thread pool management
+├── docs/                                     # Documentation
+│   ├── README.md                             # Docs navigation hub
+│   ├── QUICK_START.md, DEPLOYMENT_GUIDE.md   # Getting started
+│   ├── Agent/                                # Agent documentation
+│   ├── API/                                  # API documentation
+│   ├── Features/                             # Feature guides
+│   └── Storage/                              # Storage & database docs
+├── tests/                                    # Test suite
+│   ├── test_duplicate_detection.py           # Duplicate chunk tests
+│   ├── test_document_creation_behavior.py    # Document processing tests
+│   └── More test files...
+├── examples/                                 # Example usage
+│   ├── api_client.py                         # API client examples
+│   └── chromadb_example.py                   # ChromaDB usage
+├── pyproject.toml                            # Project configuration
+├── requirements.txt                          # Python dependencies
+├── environment.yml                           # Conda environment
+└── README.md                                 # This file
 ```
 
 ## 🔑 Key Technologies
 
-- **FastAPI**: Modern Python web framework
-- **Uvicorn**: ASGI server
-- **Pydantic**: Data validation
-- **LangChain**: LLM orchestration
-- **FAISS**: Vector similarity search
-- **HuggingFace**: Embeddings
-- **OpenAI**: GPT models
-- **Threading**: Parallel processing
+- **FastAPI**: Modern async Python web framework
+- **Uvicorn**: Production ASGI server
+- **Pydantic**: Type validation & serialization
+- **ChromaDB**: Vector database with persistent storage
+- **LangChain**: Document processing & text chunking
+- **OpenAI & HuggingFace**: LLM & embedding models
+- **MongoDB**: Document database for KB storage
+- **AWS S3**: Distributed file storage
+- **AWS RDS**: Relational database for audit logs
+- **PyMongo**: MongoDB driver
+- **Boto3**: AWS SDK integration
 
 ## 🎯 Performance
 
-- **Entity-Scoped Search**: 5-10ms (vs 500ms global)
-- **Parallel Indexing**: Process multiple entities concurrently
-- **Streaming Chat**: Real-time token-by-token responses
-- **Isolated Indexes**: No cross-entity interference
-- **Thread-Safe**: Safe concurrent operations
+- **Vector Search**: <100ms for semantic similarity queries
+- **GPU Embeddings**: Fast embedding generation with GPU support
+- **Chunking Pipeline**: Intelligent document chunking with duplicate detection
+- **S3 Hybrid Storage**: Local cache with S3 backup for reliability
+- **Scalable Architecture**: Support for multiple concurrent users via API key isolation
+- **Async Operations**: Non-blocking I/O throughout the stack
 
 ## 📦 Package Configuration
 
@@ -329,54 +355,90 @@ pip install -e ".[dev,docs,gpu]"
 ### Environment Variables
 
 ```bash
-# Required
-OPENAI_API_KEY=your-api-key-here
+# API Configuration
+PORT=8000
+API_HOST=0.0.0.0
+API_WORKERS=4
 
-# Optional
-DATA_DIR=/path/to/data              # Default: ./data
-LOG_LEVEL=info                      # Default: info
-PORT=8000                           # Default: 8000
-WORKERS=4                           # Default: 4
+# Database
+MONGODB_URI=mongodb://localhost:27017
+DATABASE_NAME=agentic_rag
+
+# ChromaDB
+CHROMADB_PERSISTENCE_DIR=./chroma_data
+CHROMADB_HOST=localhost
+CHROMADB_PORT=8001
+
+# AWS S3
+AWS_S3_BUCKET=your-bucket-name
+AWS_ACCESS_KEY_ID=your-access-key
+AWS_SECRET_ACCESS_KEY=your-secret-key
+AWS_REGION=us-east-1
+
+# LLM & Embeddings
+OPENAI_API_KEY=your-api-key
+EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+
+# Logging
+LOG_LEVEL=info
 ```
 
-### Settings
+### Settings Configuration
 
-Edit `src/config/settings.py`:
+Edit `src/config/_settings.py`:
 
 ```python
 class Config:
-    EMBEDDINGS_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+    # Database
+    MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
+    DATABASE_NAME = os.getenv("DATABASE_NAME", "agentic_rag")
+
+    # ChromaDB
+    CHROMADB_PERSISTENCE_DIR = "./chroma_data"
+
+    # Document Processing
     CHUNK_SIZE = 1000
     CHUNK_OVERLAP = 200
-    DATA_DIR = "./data"
-    # ... more settings
+
+    # Collections
+    CHUNKS_COLLECTION = "chunks"
+    DOCUMENTS_COLLECTION = "documents"
+    USERS_COLLECTION = "users"
+    API_KEYS_COLLECTION = "api_keys"
 ```
 
 ## 🧪 Testing
 
-### Run All Tests
+### Run Test Suite
 
 ```bash
-# Test JSON storage
-python tests/test_json_storage.py
+# Run all tests with pytest
+pytest tests/ -v
 
-# Test entity-scoped RAG
-python tests/test_entity_scoped_rag.py
+# Run specific test file
+pytest tests/test_duplicate_detection.py -v
 
-# Test API
-cd api
-python test_api.py
+# Run with coverage
+pytest tests/ --cov=src --cov-report=html
 ```
 
-### Manual Testing
+### Manual API Testing
 
 ```bash
-# Start server
-cd api
-python main.py
-
-# In another terminal
+# Health check
 curl http://localhost:8000/health
+
+# Generate API key (requires admin key)
+curl -X POST http://localhost:8000/admin/api_keys/generate \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: admin-key" \
+  -d '{"user_id": "user_123", "role": "user"}'
+
+# Create knowledge base
+curl -X POST http://localhost:8000/api/knowledge-bases \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
+  -d '{"name": "Test KB", "description": "Test"}'
 ```
 
 ## 🚢 Production Deployment
@@ -385,99 +447,179 @@ curl http://localhost:8000/health
 
 ```bash
 cd api
-uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
+uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4 --log-level info
 ```
 
 ### Using Docker
 
 ```bash
-docker build -t entity-rag-api ./api
-docker run -p 8000:8000 -v $(pwd)/data:/app/data entity-rag-api
+# Build image
+docker build -t agentic-rag:latest .
+
+# Run with environment variables
+docker run -p 8000:8000 \
+  -e MONGODB_URI=mongodb://mongo:27017 \
+  -e AWS_S3_BUCKET=your-bucket \
+  -e OPENAI_API_KEY=your-key \
+  agentic-rag:latest
 ```
 
 ### Using Docker Compose
 
 ```bash
 docker-compose up -d
+
+# View logs
+docker-compose logs -f api
+
+# Stop services
+docker-compose down
 ```
 
-See [DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md) for complete deployment instructions.
+### With Nginx (Reverse Proxy)
+
+```nginx
+upstream api {
+    server localhost:8000;
+}
+
+server {
+    listen 80;
+    server_name your-domain.com;
+
+    location / {
+        proxy_pass http://api;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+```
+
+See [DEPLOYMENT_GUIDE.md](./docs/DEPLOYMENT_GUIDE.md) for complete deployment instructions.
 
 ## 🔒 Security
 
-### Production Considerations
+### Built-In Security Features
 
-1. **Authentication**: Add JWT/OAuth tokens
-2. **Rate Limiting**: Prevent abuse
-3. **CORS**: Configure allowed origins
-4. **File Validation**: Validate file types and sizes
-5. **HTTPS**: Use reverse proxy (Nginx)
-6. **Input Validation**: Already implemented with Pydantic
+1. **API Key Authentication**: PBKDF2-hashed keys (NIST-approved, 480,000 iterations)
+2. **Role-Based Access Control**: Admin and user roles for API keys
+3. **Operation Audit Logging**: All operations logged with timestamps and user tracking
+4. **Request Validation**: Pydantic models validate all inputs
+5. **HTTPS Support**: Ready for reverse proxy (Nginx, CloudFlare)
 
-Example authentication:
+### Production Recommendations
+
+1. **HTTPS/TLS**: Use reverse proxy or load balancer
+2. **Rate Limiting**: Implement per user/IP rate limiting
+3. **CORS Configuration**: Restrict allowed origins
+4. **Database Security**: Use MongoDB Atlas or RDS with encryption
+5. **S3 Security**: Enable versioning and encryption on S3 bucket
+6. **Secrets Management**: Use AWS Secrets Manager or HashiCorp Vault
+7. **Monitoring**: Enable CloudWatch/DataDog monitoring
+
+### API Key Security
 
 ```python
-from fastapi import Security, HTTPException
-from fastapi.security import HTTPBearer
+# API keys are hashed with PBKDF2 before storage
+from api._authentication import verify_api_key_header
 
-security = HTTPBearer()
-
-async def verify_token(credentials = Security(security)):
-    # Verify JWT token
-    if not valid_token(credentials.credentials):
-        raise HTTPException(401, "Invalid token")
+# Use X-API-Key header with PBKDF2 verification
+# Keys are hashed: api_hash = pbkdf2_hmac("sha256", key, salt, 480000)
+# Database lookups match against hashed values only
 ```
 
 ## 📖 Documentation
 
-- **[API_DOCUMENTATION.md](./API_DOCUMENTATION.md)** - Complete API reference
-- **[DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md)** - Production deployment
-- **[PERSISTENCE_GUIDE.md](./PERSISTENCE_GUIDE.md)** - Data persistence and backup
-- **[ENTITY_SCOPED_RAG_GUIDE.md](./ENTITY_SCOPED_RAG_GUIDE.md)** - Entity-scoped RAG details
-- **[MIGRATION_TO_JSON_STORAGE.md](./MIGRATION_TO_JSON_STORAGE.md)** - JSON storage migration
-- **Swagger Docs**: http://localhost:8000/docs
-- **ReDoc**: http://localhost:8000/redoc
+### Quick Start & Deployment
+- **[QUICK_START.md](./docs/QUICK_START.md)** - Getting started guide
+- **[DEPLOYMENT_GUIDE.md](./docs/DEPLOYMENT_GUIDE.md)** - Production deployment
+
+### Agent Framework
+- **[Agent MCP Client Guide](./docs/Agent/AGENT_MCP_CLIENT_GUIDE.md)** - Complete agent guide
+- **[Agent MCP Quick Reference](./docs/Agent/AGENT_MCP_CLIENT_QUICK_REFERENCE.md)** - Quick lookup
+
+### Storage & Vector Database
+- **[ChromaDB Quick Start](./docs/Storage/ChromaDB/CHROMADB_QUICK_START.md)** - ChromaDB setup
+- **[ChromaDB Development Guide](./docs/Storage/ChromaDB/CHROMADB_DEVELOPMENT_GUIDE.md)** - Development
+- **[ChromaDB + S3 Architecture](./docs/Storage/ChromaDB/CHROMADB_S3_ARCHITECTURE.md)** - Hybrid storage
+
+### Core Features
+- **[Document Processing Pipeline](./docs/Features/DOCUMENT_PROCESSING_PIPELINE.md)** - Ingestion process
+- **[Duplicate Chunk Handling](./docs/Features/DUPLICATE_CHUNK_HANDLING.md)** - Deduplication strategy
+- **[Troubleshooting: Zero Chunks](./docs/Features/TROUBLESHOOTING_ZERO_CHUNKS.md)** - Common issues
+
+### API Documentation
+- **[API Documentation](./docs/API/API_DOCUMENTATION.md)** - Complete API reference
+- **[Chunk Ingestion API](./docs/API/CHUNK_INGESTION_API.md)** - Chunk upload details
+
+### Interactive API Docs
+- **[Swagger UI](http://localhost:8000/docs)** - Interactive API explorer
+- **[ReDoc](http://localhost:8000/redoc)** - Alternative API documentation
 
 ## 🎓 Use Cases
 
 ### 1. Multi-Tenant SaaS
-Each customer is an entity with isolated data and searches.
+Multiple customers with isolated knowledge bases and separate API keys. PBKDF2-hashed keys provide secure per-tenant access control.
 
-### 2. Company Knowledge Base
-Each company has its own document store and chat sessions.
+### 2. Enterprise Knowledge Base
+Large organizations indexing internal documentation for employees and AI agents to query.
 
-### 3. Research Platform
-Each research project is an entity with dedicated resources.
+### 3. Customer Support Platform
+Knowledge bases per customer with RAG-powered responses from their specific documents and history.
 
-### 4. Customer Support
-Each customer account has isolated chat history and documents.
+### 4. Research & Document Analysis
+Analyze large document collections (research papers, reports) with semantic search and agent-based insights.
 
-### 5. Document Analysis
-Parallel analysis of multiple companies/entities simultaneously.
+### 5. Intelligent Assistant Backend
+Power AI assistants with fine-grained knowledge base scoping and operation audit trails.
+
+### 6. Data-Driven Insights
+Automatically extract insights from uploaded documents using agent tools and vector search.
 
 ## 🛠️ Development
 
-### Adding New Endpoints
+### Adding New Agent Tools
 
 ```python
-# In api/main.py
+# In src/core/_agents/_tool_manager/_tools/
 
-@app.post("/api/custom-endpoint", tags=["Custom"])
-async def custom_endpoint(data: CustomModel):
-    """Your custom endpoint"""
-    # Implementation
+from ._base_tool import BaseTool
+
+class CustomTool(BaseTool):
+    name = "custom_tool"
+    description = "Tool description"
+
+    async def run(self, **kwargs):
+        # Tool implementation
+        return {"result": "success"}
+```
+
+### Adding New API Endpoints
+
+```python
+# In api/_routes/
+
+from fastapi import APIRouter, Depends
+from .._authentication import verify_api_key_header
+
+router = APIRouter(prefix="/api/custom", tags=["custom"])
+
+@router.post("/endpoint")
+async def custom_endpoint(data: CustomModel, user_id: str = Depends(verify_api_key_header)):
+    """Authenticated custom endpoint"""
+    # Implementation with user_id scope
     return {"result": "success"}
 ```
 
-### Adding New Features
+### Extending Knowledge Base Manager
 
 ```python
-# In src/core/entity_scoped_rag.py
+# In src/core/_management/_sub_managers/_knowledge_base_manager.py
 
-def new_feature(self, entity_id: str, params: dict):
-    """New feature implementation"""
-    entity_store = self.get_entity_store(entity_id)
-    # Implementation
+async def custom_kb_operation(self, kb_id: str, **kwargs):
+    """Custom KB operation"""
+    # Use self.db for database access
+    # Use ChromaDBStore for vector operations
     return result
 ```
 
@@ -503,54 +645,59 @@ MIT License - See LICENSE file for details
 
 ## 🙏 Acknowledgments
 
-- LangChain for LLM orchestration
-- FastAPI for the web framework
-- FAISS for vector search
-- HuggingFace for embeddings
-- OpenAI for GPT models
+- **ChromaDB** for modern vector database
+- **FastAPI** for high-performance async web framework
+- **LangChain** for document processing & LLM integration
+- **OpenAI & HuggingFace** for LLM and embedding models
+- **MongoDB & AWS** for reliable data storage
+- **PyMongo & Boto3** for Python ecosystem integration
 
 ## 📊 Status
 
 ✅ **Production Ready**
 
-- Complete API implementation
-- Entity-scoped isolation
-- Thread-safe operations
-- Comprehensive error handling
-- Full documentation
-- Test coverage
-- Deployment ready
+- Agent-based RAG system with full modularity
+- ChromaDB vector search with GPU support
+- Secure PBKDF2 API key authentication
+- MongoDB & S3 hybrid storage architecture
+- Comprehensive operation audit logging
+- Complete error handling & rollback mechanisms
+- Full test coverage with duplicate detection
+- Production deployment guides
 
 ## 🔄 Version History
 
 ### v1.0.0 (Current)
-- Complete FastAPI implementation
-- Entity-scoped RAG with parallel processing
-- JSON storage with atomic writes
-- Multiple chat sessions per entity
-- Streaming support
-- Full API documentation
+- Agent-based RAG system with modular tool framework
+- ChromaDB vector storage with GPU embeddings
+- S3 hybrid storage for scalability
+- PBKDF2-hashed API key authentication
+- Admin/user role-based access control
+- Operation audit logging with timestamps
+- Comprehensive documentation and examples
+- Duplicate chunk detection & handling
 
 ## 🎯 Roadmap
 
-- [ ] Authentication & authorization
-- [ ] Rate limiting
-- [ ] Database persistence (PostgreSQL/MongoDB)
-- [ ] Webhook support
-- [ ] Batch operations
-- [ ] Analytics & metrics
+- [ ] Advanced agent capabilities (multi-turn reasoning, tool chaining)
+- [ ] Vector search performance optimizations
+- [ ] Knowledge base tagging and categorization
+- [ ] Rate limiting & quota management
+- [ ] Webhook events for operation notifications
+- [ ] Batch document processing
+- [ ] Analytics dashboard
 - [ ] Multi-language support
-- [ ] Advanced file type support
+- [ ] Semantic caching layer
 
 ## 📞 Support
 
-- **Documentation**: See docs/ directory
-- **Issues**: GitHub Issues
+- **Documentation**: [docs/README.md](./docs/README.md) - Complete docs index
+- **Issues**: [GitHub Issues](https://github.com/Prabhath003/AgenticRAG/issues)
 - **Email**: prabhathchellingi2003@gmail.com
-- **API Docs**: http://localhost:8000/docs
+- **API Docs**: http://localhost:8000/docs (Swagger UI)
 
 ---
 
-**Built with ❤️ by Prabhath**
+**Built with ❤️ by Prabhath Chellingi**
 
-**🚀 Ready for production use!**
+**🚀 Production-Ready Agent-Based RAG System**
