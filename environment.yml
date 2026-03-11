@@ -109,7 +109,7 @@ dependencies:
       - mypy==1.19.1
       - mypy-boto3-s3==1.42.37
       - mypy-extensions==1.1.0
-      - numpy==2.4.2
+      - numpy==2.4.3
       - oauthlib==3.3.1
       - onnxruntime==1.24.2
       - openai==2.24.0
